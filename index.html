@@ -44,6 +44,9 @@
     <div class="search-results" id="searchResults"></div>
   </div>
 
+  <!-- ── Tab Bar ── -->
+  <nav class="tab-bar" id="tabBar" aria-label="Views"></nav>
+
   <!-- ── Breadcrumb ── -->
   <nav class="breadcrumb" id="breadcrumb" aria-label="Navigation path"></nav>
 
@@ -77,6 +80,38 @@
       <div class="modal-actions">
         <button class="btn-ghost"   id="addCancelBtn">Cancel</button>
         <button class="btn-primary" id="addSaveBtn">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Schedule Modal ── -->
+  <div class="overlay" id="scheduleModal" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h2 class="modal-title">Set Schedule</h2>
+
+      <div class="sched-type-row">
+        <button class="sched-type-btn active" data-type="once">Once</button>
+        <button class="sched-type-btn"        data-type="daily">Every day</button>
+        <button class="sched-type-btn"        data-type="weekly">Weekly</button>
+      </div>
+
+      <div id="schedDateRow">
+        <input class="modal-input" id="schedDateInput" type="date">
+      </div>
+
+      <div id="schedDaysRow" class="sched-days-row" style="display:none">
+        <button class="day-btn" data-day="0">Sun</button>
+        <button class="day-btn" data-day="1">Mon</button>
+        <button class="day-btn" data-day="2">Tue</button>
+        <button class="day-btn" data-day="3">Wed</button>
+        <button class="day-btn" data-day="4">Thu</button>
+        <button class="day-btn" data-day="5">Fri</button>
+        <button class="day-btn" data-day="6">Sat</button>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn-ghost"   id="schedCancelBtn">Cancel</button>
+        <button class="btn-primary" id="schedSaveBtn">Save</button>
       </div>
     </div>
   </div>

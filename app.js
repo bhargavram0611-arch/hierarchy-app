@@ -22,9 +22,14 @@ let pendingShare       = null;
 let shareUrl           = '';
 let shareCategoryId    = ROOT_ID;
 let categoryPickerCb   = null;
-let addLinkItemId      = null;   // item we're adding a link to
-let lastAutoName       = '';     // last auto-detected name in add-link modal
-let renameLinkTarget   = null;   // { itemId, linkId }
+let addLinkItemId      = null;
+let lastAutoName       = '';
+let renameLinkTarget   = null;
+let activeTab          = 'tree';  // 'tree' | 'today' | 'future' | 'done'
+let tabItemId          = null;    // item being viewed from a non-tree tab
+let schedItemId        = null;
+let schedType          = 'once';
+let schedDays          = new Set();
 
 // ─── Crypto helpers ───────────────────────────────────────────────────────────
 const _enc = new TextEncoder();
@@ -130,6 +135,70 @@ function migrateData() {
   });
 }
 
+// ─── Schedule utilities ───────────────────────────────────────────────────────
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayDow  = () => new Date().getDay(); // 0 = Sun
+
+function isScheduledToday(node) {
+  if (node.type !== 'item' || !node.schedule) return false;
+  const s = node.schedule, t = todayStr();
+  if (s.type === 'once')   return s.date <= t && !node.done;
+  if (s.type === 'daily')  return node.doneDate !== t;
+  if (s.type === 'weekly') return (s.days || []).includes(todayDow()) && node.doneDate !== t;
+  return false;
+}
+
+function isScheduledFuture(node) {
+  if (node.type !== 'item' || !node.schedule) return false;
+  return node.schedule.type === 'once' && node.schedule.date > todayStr() && !node.done;
+}
+
+function isItemDone(node) { return node.type === 'item' && node.done === true; }
+
+function isDoneToday(node) {
+  if (!node.schedule) return false;
+  if (node.schedule.type === 'once') return node.done === true;
+  return node.doneDate === todayStr();
+}
+
+function getScheduleLabel(node) {
+  if (!node.schedule) return '';
+  const s = node.schedule;
+  if (s.type === 'once')   return formatSchedDate(s.date);
+  if (s.type === 'daily')  return 'Every day';
+  if (s.type === 'weekly') {
+    const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const names = [...(s.days || [])].sort().map(d => DAYS[d]);
+    return 'Every ' + (names.length ? names.join(', ') : '—');
+  }
+  return '';
+}
+
+function formatSchedDate(iso) {
+  const t = todayStr();
+  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+  const tStr = tomorrow.toISOString().slice(0, 10);
+  if (iso === t)    return 'Today';
+  if (iso === tStr) return 'Tomorrow';
+  if (iso < t)      return `Overdue · ${iso}`;
+  const d = new Date(iso + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric',
+    year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
+}
+
+function completeItem(id) {
+  const n = state.nodes[id]; if (!n) return;
+  if (!n.schedule || n.schedule.type === 'once') { n.done = true; n.doneAt = Date.now(); }
+  else { n.doneDate = todayStr(); }
+  save(); render();
+}
+
+function uncompleteItem(id) {
+  const n = state.nodes[id]; if (!n) return;
+  n.done = false; n.doneDate = null; n.doneAt = null;
+  save(); render();
+}
+
 // ─── Queries ─────────────────────────────────────────────────────────────────
 const current = () => state.nodes[state.path[state.path.length - 1]];
 const childCount = node => node.type === 'category' ? (node.children?.length ?? 0) : 0;
@@ -169,7 +238,10 @@ function _deleteTree(id) {
 
 // ─── Navigation ──────────────────────────────────────────────────────────────
 function navInto(id) { state.path.push(id); render(); }
-function navBack()   { if (state.path.length > 1) { state.path.pop(); render(); } }
+function navBack()   {
+  if (activeTab !== 'tree' && tabItemId) { tabItemId = null; render(); return; }
+  if (state.path.length > 1) { state.path.pop(); render(); }
+}
 function navTo(idx)  { state.path = state.path.slice(0, idx + 1); render(); }
 
 // ─── Lock Screen ─────────────────────────────────────────────────────────────
@@ -261,13 +333,26 @@ async function submitChangePassword() {
 
 // ─── Render ──────────────────────────────────────────────────────────────────
 function render() {
-  const node = current();
-  const isDetail = node.type === 'item';
   renderHeader();
+  renderTabs();
   renderBreadcrumb();
-  $('fab').style.display = isDetail ? 'none' : 'flex';
-  if (isDetail) renderItemDetail(node);
-  else renderList();
+
+  if (activeTab !== 'tree') {
+    $('fab').style.display = 'none';
+    if (tabItemId && state.nodes[tabItemId]) {
+      $('emptyState').style.display = 'none';
+      renderItemDetail(state.nodes[tabItemId]);
+    } else {
+      tabItemId = null;
+      renderTabView();
+    }
+  } else {
+    const node = current();
+    const isDetail = node.type === 'item';
+    $('fab').style.display = isDetail ? 'none' : 'flex';
+    if (isDetail) renderItemDetail(node);
+    else renderList();
+  }
 }
 
 function renderItemDetail(node) {
@@ -276,6 +361,43 @@ function renderItemDetail(node) {
   listEl.innerHTML = '';
 
   const editor = el('div', 'notes-editor');
+
+  // Schedule section
+  const schedSec = el('div', 'sched-section');
+  const lbl = getScheduleLabel(node);
+  if (lbl) {
+    const row = el('div', 'sched-row');
+    const chip = el('span', 'sched-chip');
+    const isOverdue = node.schedule?.type === 'once' && node.schedule?.date < todayStr() && !node.done;
+    if (isOverdue) chip.classList.add('overdue');
+    chip.textContent = lbl;
+    row.appendChild(chip);
+
+    const doneBtn = el('button', `sched-done-btn${isDoneToday(node) ? ' done' : ''}`);
+    doneBtn.textContent = isDoneToday(node) ? '✓ Done' : 'Mark done';
+    doneBtn.onclick = () => isDoneToday(node) ? uncompleteItem(node.id) : completeItem(node.id);
+    row.appendChild(doneBtn);
+
+    const changeBtn = el('button', 'sched-edit-btn');
+    changeBtn.textContent = '✎';
+    changeBtn.title = 'Change schedule';
+    changeBtn.onclick = () => openScheduleModal(node.id);
+    row.appendChild(changeBtn);
+
+    const clearBtn = el('button', 'sched-clear-btn');
+    clearBtn.textContent = '✕';
+    clearBtn.title = 'Remove schedule';
+    clearBtn.onclick = () => { node.schedule = null; node.done = false; node.doneDate = null; save(); render(); };
+    row.appendChild(clearBtn);
+
+    schedSec.appendChild(row);
+  } else {
+    const addBtn = el('button', 'sched-add-btn');
+    addBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5C3.9 3 3 3.9 3 5v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zm-7-7h-3v3H7v-2H4v-2h3V9h2v3h3v2z"/></svg> Set schedule`;
+    addBtn.onclick = () => openScheduleModal(node.id);
+    schedSec.appendChild(addBtn);
+  }
+  editor.appendChild(schedSec);
 
   // Links section
   const links = node.links || [];
@@ -430,13 +552,42 @@ function openRenameLinkModal(itemId, linkId, currentName) {
 }
 
 function renderHeader() {
-  const atRoot = state.path.length === 1;
-  $('backBtn').style.display = atRoot ? 'none' : 'flex';
-  $('headerTitle').textContent = current().name;
+  let showBack;
+  if (activeTab === 'tree') showBack = state.path.length > 1;
+  else                      showBack = tabItemId !== null;
+  $('backBtn').style.display = showBack ? 'flex' : 'none';
+
+  let title;
+  if (activeTab !== 'tree' && tabItemId) title = state.nodes[tabItemId]?.name || '';
+  else if (activeTab === 'today')         title = 'Today';
+  else if (activeTab === 'future')        title = 'Upcoming';
+  else if (activeTab === 'done')          title = 'Done';
+  else                                    title = current().name;
+  $('headerTitle').textContent = title;
+}
+
+function renderTabs() {
+  const todayCount = Object.values(state.nodes).filter(isScheduledToday).length;
+  const TABS = [
+    { id: 'tree',   label: 'All',      svg: `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>` },
+    { id: 'today',  label: 'Today',    svg: `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5C3.9 3 3 3.9 3 5v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>`, badge: todayCount },
+    { id: 'future', label: 'Upcoming', svg: `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5C3.9 3 3 3.9 3 5v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zm-2-5h-4v4h-2v-4H9v-2h2V9h2v3h4v2z"/></svg>` },
+    { id: 'done',   label: 'Done',     svg: `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>` },
+  ];
+  const bar = $('tabBar');
+  bar.innerHTML = '';
+  TABS.forEach(t => {
+    const btn = el('button', `tab-btn${activeTab === t.id ? ' active' : ''}`);
+    btn.innerHTML = `${t.svg}<span>${t.label}</span>`;
+    if (t.badge) { const b = el('span', 'tab-badge'); b.textContent = t.badge; btn.appendChild(b); }
+    btn.onclick = () => { activeTab = t.id; tabItemId = null; render(); };
+    bar.appendChild(btn);
+  });
 }
 
 function renderBreadcrumb() {
   const bc = $('breadcrumb');
+  bc.style.display = (activeTab === 'tree') ? '' : 'none';
   bc.innerHTML = '';
   state.path.forEach((id, i) => {
     const node = state.nodes[id];
@@ -464,6 +615,71 @@ function renderList() {
   kids.forEach((n, i) => {
     const li = el('li'); li.appendChild(makeCard(n, i)); listEl.appendChild(li);
   });
+}
+
+function renderTabView() {
+  const listEl = $('itemList');
+  const emptyEl = $('emptyState');
+  listEl.innerHTML = '';
+
+  let items, emptyIcon, emptyMsg;
+  if (activeTab === 'today') {
+    items = Object.values(state.nodes).filter(isScheduledToday);
+    items.sort((a, b) => (a.schedule?.date || '').localeCompare(b.schedule?.date || ''));
+    emptyIcon = '📅'; emptyMsg = 'Nothing due today';
+  } else if (activeTab === 'future') {
+    items = Object.values(state.nodes).filter(isScheduledFuture);
+    items.sort((a, b) => a.schedule.date.localeCompare(b.schedule.date));
+    emptyIcon = '🗓'; emptyMsg = 'No upcoming items';
+  } else {
+    items = Object.values(state.nodes).filter(isItemDone);
+    items.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+    emptyIcon = '✅'; emptyMsg = 'No completed items';
+  }
+
+  if (!items.length) {
+    emptyEl.style.display = 'block';
+    emptyEl.innerHTML = `<div class="empty-icon">${emptyIcon}</div><h2>${emptyMsg}</h2><p>Set a schedule on any item to see it here</p>`;
+    return;
+  }
+  emptyEl.style.display = 'none';
+  items.forEach(node => { const li = el('li'); li.appendChild(makeScheduledCard(node)); listEl.appendChild(li); });
+}
+
+const ICON_CHECK_DONE  = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>`;
+const ICON_CHECK_EMPTY = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"/></svg>`;
+
+function makeScheduledCard(node) {
+  const card = el('div', 'item-card');
+
+  const chk = el('button', `sched-check${isDoneToday(node) ? ' checked' : ''}`);
+  chk.innerHTML = isDoneToday(node) ? ICON_CHECK_DONE : ICON_CHECK_EMPTY;
+  chk.onclick = e => { e.stopPropagation(); isDoneToday(node) ? uncompleteItem(node.id) : completeItem(node.id); };
+  card.appendChild(chk);
+
+  const info = el('div', 'item-info');
+  const nameEl = el('div', 'item-name');
+  if (node.done) nameEl.classList.add('strikethrough');
+  nameEl.textContent = node.name;
+  info.appendChild(nameEl);
+
+  const path = getNodePath(node.id);
+  if (path) { const p = el('div', 'item-meta'); p.textContent = path; info.appendChild(p); }
+
+  const lbl = getScheduleLabel(node);
+  if (lbl) {
+    const chip = el('span', 'sched-chip');
+    const isOverdue = node.schedule?.type === 'once' && node.schedule?.date < todayStr() && !node.done;
+    if (isOverdue) chip.classList.add('overdue');
+    chip.textContent = lbl;
+    info.appendChild(chip);
+  }
+  card.appendChild(info);
+
+  const chev = el('div', 'item-chevron'); chev.innerHTML = ICON_CHEV; card.appendChild(chev);
+
+  card.onclick = e => { if (e.target.closest('.sched-check')) return; tabItemId = node.id; render(); };
+  return card;
 }
 
 function makeCard(node, idx) {
@@ -986,6 +1202,47 @@ function populateMoveList(query) {
   });
 }
 
+// ─── Schedule Modal ──────────────────────────────────────────────────────────
+function openScheduleModal(itemId) {
+  schedItemId = itemId;
+  const node = state.nodes[itemId];
+  const s = node.schedule;
+  schedType = s?.type || 'once';
+  schedDays = new Set(s?.days || []);
+
+  $('schedDateInput').value = s?.date || todayStr();
+  updateSchedTypeUI();
+
+  openModal('scheduleModal');
+}
+
+function updateSchedTypeUI() {
+  document.querySelectorAll('.sched-type-btn').forEach(b => b.classList.toggle('active', b.dataset.type === schedType));
+  $('schedDateRow').style.display  = schedType === 'once'   ? 'block' : 'none';
+  $('schedDaysRow').style.display  = schedType === 'weekly' ? 'flex'  : 'none';
+  updateDayBtns();
+}
+
+function updateDayBtns() {
+  document.querySelectorAll('.day-btn').forEach(b => b.classList.toggle('active', schedDays.has(+b.dataset.day)));
+}
+
+function submitSchedule() {
+  const node = state.nodes[schedItemId]; if (!node) return;
+  if (schedType === 'once') {
+    const d = $('schedDateInput').value;
+    if (!d) { shake('schedDateInput'); return; }
+    node.schedule = { type: 'once', date: d };
+  } else if (schedType === 'daily') {
+    node.schedule = { type: 'daily' };
+  } else {
+    if (!schedDays.size) return;
+    node.schedule = { type: 'weekly', days: [...schedDays].sort() };
+  }
+  node.done = false; node.doneDate = null; node.doneAt = null;
+  save(); closeModal('scheduleModal'); render();
+}
+
 // ─── Event wiring ─────────────────────────────────────────────────────────────
 function wireEvents() {
   // Lock screen
@@ -1063,6 +1320,17 @@ function wireEvents() {
     if (confirm(msg)) deleteNode(id);
   };
   $('backdrop').onclick = closeCtxMenu;
+
+  // Schedule Modal
+  document.querySelectorAll('.sched-type-btn').forEach(b => {
+    b.onclick = () => { schedType = b.dataset.type; updateSchedTypeUI(); };
+  });
+  document.querySelectorAll('.day-btn').forEach(b => {
+    b.onclick = () => { const d = +b.dataset.day; schedDays.has(d) ? schedDays.delete(d) : schedDays.add(d); updateDayBtns(); };
+  });
+  $('schedSaveBtn').onclick   = submitSchedule;
+  $('schedCancelBtn').onclick = () => closeModal('scheduleModal');
+  $('scheduleModal').onclick  = e => { if (e.target === $('scheduleModal')) closeModal('scheduleModal'); };
 
   // Search
   $('searchBtn').onclick      = openSearch;
