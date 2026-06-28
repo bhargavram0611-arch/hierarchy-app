@@ -71,7 +71,8 @@ After every push, user must **close and reopen the installed PWA** to get the up
 ## Workflow for every session
 
 1. Read `starthere.md` (this file)
-2. Read `progress.md` to see what was last worked on and what's planned
-3. Read the relevant source files before making changes
-4. After coding: bump SW cache in `sw.js`, run `node --check app.js`, then `git add / commit / push`
-5. Update `progress.md` with what was done this session and any new ideas or next steps
+2. Read `README.md` — full feature list, data model, and file descriptions
+3. Read `progress.md` — session history, what was last worked on, and planned next steps
+4. Read the relevant source files before making any changes
+5. After coding: bump SW cache in `sw.js`, run `node --check app.js`, then `git add / commit / push`
+6. Update `progress.md` with what was done this session and any new ideas or next steps
