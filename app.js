@@ -20,6 +20,7 @@ let state = {
 };
 
 let ctxTarget = null;   // ID of node the context menu is open for
+let drag = { active: false, id: null, ghost: null, source: null, lastTarget: null };
 
 // ─── Persistence ─────────────────────────────────────────────────────────────
 function load() {
@@ -179,10 +180,7 @@ function renderList() {
   emptyEl.style.display = 'none';
   listEl.innerHTML = '';
 
-  const cats  = kids.filter(n => n.type === 'category').sort((a,b) => a.name.localeCompare(b.name));
-  const items = kids.filter(n => n.type === 'item').sort((a,b) => a.name.localeCompare(b.name));
-
-  [...cats, ...items].forEach((n, i) => {
+  kids.forEach((n, i) => {
     const li   = el('li');
     const card = makeCard(n, i);
     li.appendChild(card);
@@ -196,6 +194,14 @@ function makeCard(node, idx) {
   const card = el('div', 'item-card');
   card.dataset.id = node.id;
   card.style.animationDelay = `${idx * 30}ms`;
+
+  // Drag handle
+  const handle = el('div', 'drag-handle');
+  handle.innerHTML = ICON_DRAG;
+  handle.setAttribute('aria-hidden', 'true');
+  handle.addEventListener('pointerdown', e => startDrag(e, card, node.id));
+  handle.addEventListener('click', e => e.stopPropagation());
+  card.appendChild(handle);
 
   // Icon
   const ico = el('div', `item-ico ${isCat ? 'cat' : 'leaf'}`);
@@ -231,9 +237,9 @@ function makeCard(node, idx) {
   moreBtn.onclick = e => { e.stopPropagation(); openCtxMenu(e, node.id); };
   card.appendChild(moreBtn);
 
-  // All cards navigate on click
+  // All cards navigate on click (ignore handle and more-btn)
   card.addEventListener('click', e => {
-    if (e.target.closest('.item-more')) return;
+    if (e.target.closest('.item-more') || e.target.closest('.drag-handle')) return;
     navInto(node.id);
   });
 
@@ -250,6 +256,87 @@ function makeCard(node, idx) {
   card.addEventListener('touchmove', () => clearTimeout(lpTimer));
 
   return card;
+}
+
+// ─── Drag & Drop ─────────────────────────────────────────────────────────────
+function reorderNode(dragId, targetId, insertBefore) {
+  if (dragId === targetId) return;
+  const n = state.nodes[dragId], t = state.nodes[targetId];
+  if (!n || !t || n.parentId !== t.parentId) return;
+  const children = state.nodes[n.parentId].children;
+  const fromIdx = children.indexOf(dragId);
+  if (fromIdx === -1) return;
+  children.splice(fromIdx, 1);
+  const toIdx = children.indexOf(targetId);
+  children.splice(insertBefore ? toIdx : toIdx + 1, 0, dragId);
+  save(); render();
+}
+
+function clearDropIndicators() {
+  document.querySelectorAll('.drop-above, .drop-below')
+    .forEach(el => el.classList.remove('drop-above', 'drop-below'));
+}
+
+function startDrag(e, card, nodeId) {
+  if (e.button !== undefined && e.button !== 0) return;
+  e.preventDefault();
+
+  const startX = e.clientX, startY = e.clientY;
+  const rect = card.getBoundingClientRect();
+  let activated = false;
+
+  function activate() {
+    activated = true;
+    drag.active = true;
+    drag.id = nodeId;
+    drag.source = card;
+    drag.offsetY = startY - rect.top;
+
+    const g = card.cloneNode(true);
+    g.className = 'item-card drag-ghost';
+    Object.assign(g.style, { width: rect.width + 'px', top: rect.top + 'px', left: rect.left + 'px' });
+    document.body.appendChild(g);
+    drag.ghost = g;
+    card.classList.add('drag-source');
+  }
+
+  function move(ev) {
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    if (!activated && Math.hypot(dx, dy) < 6) return;
+    if (!activated) activate();
+    ev.preventDefault();
+
+    drag.ghost.style.top = (ev.clientY - drag.offsetY) + 'px';
+
+    drag.ghost.style.visibility = 'hidden';
+    const under = document.elementFromPoint(ev.clientX, ev.clientY);
+    drag.ghost.style.visibility = '';
+
+    clearDropIndicators();
+    const tc = under?.closest('[data-id]');
+    if (tc && tc !== card) {
+      const r = tc.getBoundingClientRect();
+      const before = ev.clientY < r.top + r.height / 2;
+      drag.lastTarget = { id: tc.dataset.id, before };
+      tc.classList.add(before ? 'drop-above' : 'drop-below');
+    } else {
+      drag.lastTarget = null;
+    }
+  }
+
+  function up() {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    if (!activated) return;
+    if (drag.lastTarget) reorderNode(drag.id, drag.lastTarget.id, drag.lastTarget.before);
+    drag.ghost?.remove();
+    card.classList.remove('drag-source');
+    clearDropIndicators();
+    drag = { active: false, id: null, ghost: null, source: null, lastTarget: null };
+  }
+
+  document.addEventListener('pointermove', move, { passive: false });
+  document.addEventListener('pointerup', up);
 }
 
 // ─── Context Menu ─────────────────────────────────────────────────────────────
@@ -352,6 +439,12 @@ const ICON_CHEV = `<svg width="18" height="18" viewBox="0 0 24 24" fill="current
 
 const ICON_DOTS = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
   <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+</svg>`;
+
+const ICON_DRAG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+  <circle cx="9" cy="5" r="2"/><circle cx="15" cy="5" r="2"/>
+  <circle cx="9" cy="12" r="2"/><circle cx="15" cy="12" r="2"/>
+  <circle cx="9" cy="19" r="2"/><circle cx="15" cy="19" r="2"/>
 </svg>`;
 
 const ICON_BACK = `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">

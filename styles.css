@@ -465,6 +465,42 @@ body {
   opacity: .8;
 }
 
+/* ── Drag & Drop ── */
+.drag-handle {
+  width: 28px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+  opacity: 0.3;
+  cursor: grab;
+  flex-shrink: 0;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  margin-left: -4px;
+}
+.drag-handle:hover { opacity: 0.7; }
+.drag-handle:active { cursor: grabbing; opacity: 1; }
+
+.drag-ghost {
+  position: fixed !important;
+  pointer-events: none !important;
+  z-index: 999;
+  opacity: 0.92;
+  box-shadow: 0 8px 28px rgba(0,0,0,.22) !important;
+  transform: rotate(0.6deg) scale(1.01);
+  animation: none !important;
+}
+
+.drag-source {
+  opacity: 0.3;
+}
+
+.item-card.drop-above { border-top: 2.5px solid var(--primary); }
+.item-card.drop-below { border-bottom: 2.5px solid var(--primary); }
+
 /* ── Fade-in animation for list items ── */
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(6px); }
