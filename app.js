@@ -18,10 +18,13 @@ let state = {
 let cryptoKey = null;   // AES-GCM CryptoKey — lives only in memory, never stored
 let ctxTarget = null;
 let drag = { active: false, id: null, ghost: null, source: null, lastTarget: null };
-let pendingShare       = null;   // captured from share-target URL params
+let pendingShare       = null;
 let shareUrl           = '';
 let shareCategoryId    = ROOT_ID;
-let categoryPickerCb   = null;   // callback for generic category picker
+let categoryPickerCb   = null;
+let addLinkItemId      = null;   // item we're adding a link to
+let lastAutoName       = '';     // last auto-detected name in add-link modal
+let renameLinkTarget   = null;   // { itemId, linkId }
 
 // ─── Crypto helpers ───────────────────────────────────────────────────────────
 const _enc = new TextEncoder();
@@ -111,6 +114,20 @@ function sanitizePath() {
     state.nodes[ROOT_ID] = { id: ROOT_ID, name: 'My Hierarchy', type: 'category', parentId: null, children: [], createdAt: Date.now() };
     state.path = [ROOT_ID];
   }
+  migrateData();
+}
+
+function migrateData() {
+  Object.values(state.nodes).forEach(node => {
+    if (node.type !== 'item') return;
+    if (!node.links) {
+      // Migrate old single-url field → links array
+      node.links = node.url
+        ? [{ id: crypto.randomUUID(), name: detectPlatform(node.url), url: node.url }]
+        : [];
+      delete node.url;
+    }
+  });
 }
 
 // ─── Queries ─────────────────────────────────────────────────────────────────
@@ -123,7 +140,7 @@ function addNode(name, type) {
   const id = crypto.randomUUID();
   const node = { id, name: name.trim(), type, parentId: parent.id, createdAt: Date.now() };
   if (type === 'category') node.children = [];
-  if (type === 'item')     node.notes    = '';
+  if (type === 'item')   { node.notes = ''; node.links = []; }
   state.nodes[id] = node;
   parent.children.push(id);
   save(); render();
@@ -260,17 +277,21 @@ function renderItemDetail(node) {
 
   const editor = el('div', 'notes-editor');
 
-  // URL link (for items saved via share)
-  if (node.url) {
-    const link = el('a', 'item-url-link');
-    link.href = node.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
-    const ico  = el('span', 'url-platform'); ico.textContent = getPlatformIcon(node.url);
-    const txt  = el('span', 'url-text');     txt.textContent = node.url;
-    const lbl  = el('span', 'url-open');     lbl.textContent = 'Open ↗';
-    link.appendChild(ico); link.appendChild(txt); link.appendChild(lbl);
-    editor.appendChild(link);
+  // Links section
+  const links = node.links || [];
+  if (links.length) {
+    const sec = el('div', 'links-section');
+    links.forEach((link, i) => sec.appendChild(renderLinkCard(node.id, link, i + 1)));
+    editor.appendChild(sec);
   }
 
+  // Add Link button
+  const addBtn = el('button', 'add-link-btn');
+  addBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg> Add Link`;
+  addBtn.onclick = () => openAddLinkModal(node.id);
+  editor.appendChild(addBtn);
+
+  // Notes textarea
   const textarea = el('textarea', 'notes-textarea');
   textarea.placeholder = 'Write your notes here…';
   textarea.value = node.notes || '';
@@ -292,7 +313,120 @@ function renderItemDetail(node) {
   editor.appendChild(textarea);
   editor.appendChild(status);
   listEl.appendChild(editor);
-  setTimeout(() => textarea.focus(), 150);
+  if (!links.length) setTimeout(() => textarea.focus(), 150);
+}
+
+function renderLinkCard(itemId, link, num) {
+  const card = el('div', 'link-card');
+  const thumb = getYoutubeThumbnail(link.url);
+
+  if (thumb) {
+    const img = el('img', 'link-thumb');
+    img.src = thumb; img.alt = link.name;
+    img.onerror = () => { img.style.display = 'none'; };
+    card.appendChild(img);
+  } else {
+    const ico = el('div', 'link-platform-ico');
+    ico.textContent = getPlatformIcon(link.url);
+    card.appendChild(ico);
+  }
+
+  const info    = el('div', 'link-info');
+  const nameRow = el('div', 'link-name-row');
+  const numEl   = el('span', 'link-num');  numEl.textContent = `${num}.`;
+  const nameEl  = el('span', 'link-name'); nameEl.textContent = link.name;
+  nameRow.appendChild(numEl); nameRow.appendChild(nameEl);
+  const urlEl   = el('div', 'link-url');   urlEl.textContent = link.url;
+  info.appendChild(nameRow); info.appendChild(urlEl);
+
+  const actions = el('div', 'link-actions');
+
+  const editBtn = el('button', 'link-action-btn');
+  editBtn.title = 'Rename';
+  editBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>`;
+  editBtn.onclick = e => { e.stopPropagation(); openRenameLinkModal(itemId, link.id, link.name); };
+
+  const delBtn = el('button', 'link-action-btn danger');
+  delBtn.title = 'Delete';
+  delBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`;
+  delBtn.onclick = e => { e.stopPropagation(); if (confirm(`Delete link "${link.name}"?`)) deleteLink(itemId, link.id); };
+
+  actions.appendChild(editBtn); actions.appendChild(delBtn);
+
+  card.appendChild(info); card.appendChild(actions);
+
+  card.onclick = e => {
+    if (e.target.closest('.link-actions')) return;
+    window.open(link.url, '_blank', 'noopener');
+  };
+
+  return card;
+}
+
+function getYoutubeThumbnail(url) {
+  const m = url?.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?\s/]+)/);
+  return m ? `https://img.youtube.com/vi/${m[1]}/hqdefault.jpg` : null;
+}
+
+// ─── Link CRUD ────────────────────────────────────────────────────────────────
+function addLink(itemId, name, url) {
+  const node = state.nodes[itemId];
+  if (!node || node.type !== 'item') return;
+  if (!node.links) node.links = [];
+  node.links.push({ id: crypto.randomUUID(), name, url });
+  save(); render();
+}
+
+function deleteLink(itemId, linkId) {
+  const node = state.nodes[itemId];
+  if (!node) return;
+  node.links = (node.links || []).filter(l => l.id !== linkId);
+  save(); render();
+}
+
+function renameLink(itemId, linkId, name) {
+  const node = state.nodes[itemId];
+  if (!node) return;
+  const link = (node.links || []).find(l => l.id === linkId);
+  if (link) { link.name = name; save(); render(); }
+}
+
+// ─── Add Link Modal ───────────────────────────────────────────────────────────
+function openAddLinkModal(itemId) {
+  addLinkItemId   = itemId;
+  lastAutoName    = '';
+  $('linkUrlInput').value  = '';
+  $('linkNameInput').value = '';
+  $('linkUrlInput').classList.remove('shake');
+  openModal('addLinkModal');
+  setTimeout(() => $('linkUrlInput').focus(), 300);
+}
+
+function onLinkUrlInput(val) {
+  const detected = detectPlatform(val.trim());
+  if (!$('linkNameInput').value.trim() || $('linkNameInput').value === lastAutoName) {
+    $('linkNameInput').value = detected;
+    lastAutoName = detected;
+  }
+}
+
+function submitAddLink() {
+  const url  = $('linkUrlInput').value.trim();
+  const name = $('linkNameInput').value.trim() || detectPlatform(url);
+  if (!url) { shake('linkUrlInput'); return; }
+  try { new URL(url); } catch { shake('linkUrlInput'); return; }
+  addLink(addLinkItemId, name, url);
+  closeModal('addLinkModal');
+  addLinkItemId = null;
+}
+
+// ─── Rename Link Modal ────────────────────────────────────────────────────────
+function openRenameLinkModal(itemId, linkId, currentName) {
+  renameLinkTarget = { itemId, linkId };
+  $('renameInput').value = currentName;
+  $('renameInput').classList.remove('shake');
+  openModal('renameModal');
+  setTimeout(() => { $('renameInput').focus(); $('renameInput').select(); }, 300);
 }
 
 function renderHeader() {
@@ -361,10 +495,16 @@ function makeCard(node, idx) {
     const c = childCount(node);
     meta.textContent = c === 0 ? 'Empty' : `${c} ${c === 1 ? 'item' : 'items'}`;
     info.appendChild(meta);
-  } else if (node.notes?.trim()) {
-    const meta = el('div', 'item-meta notes-preview');
-    meta.textContent = node.notes.split('\n')[0].slice(0, 70);
-    info.appendChild(meta);
+  } else {
+    const metaParts = [];
+    const lc = node.links?.length;
+    if (lc) metaParts.push(`${lc} link${lc > 1 ? 's' : ''}`);
+    if (node.notes?.trim()) metaParts.push(node.notes.split('\n')[0].slice(0, 50));
+    if (metaParts.length) {
+      const meta = el('div', 'item-meta notes-preview');
+      meta.textContent = metaParts.join(' · ');
+      info.appendChild(meta);
+    }
   }
   card.appendChild(info);
 
@@ -623,9 +763,14 @@ function openRenameModal(id) {
 function submitRename() {
   const name = $('renameInput').value.trim();
   if (!name) { shake('renameInput'); return; }
-  renameNode(renameTarget, name);
+  if (renameLinkTarget) {
+    renameLink(renameLinkTarget.itemId, renameLinkTarget.linkId, name);
+    renameLinkTarget = null;
+  } else {
+    renameNode(renameTarget, name);
+    renameTarget = null;
+  }
   closeModal('renameModal');
-  renameTarget = null;
 }
 
 // ─── Modal helpers ────────────────────────────────────────────────────────────
@@ -714,7 +859,9 @@ function saveSharedItem() {
   if (!name) { shake('shareNameInput'); return; }
 
   const id   = crypto.randomUUID();
-  const node = { id, name, type: 'item', parentId: shareCategoryId, url: shareUrl, notes: '', createdAt: Date.now() };
+  const node = { id, name, type: 'item', parentId: shareCategoryId,
+    links: [{ id: crypto.randomUUID(), name: detectPlatform(shareUrl), url: shareUrl }],
+    notes: '', createdAt: Date.now() };
   state.nodes[id] = node;
   state.nodes[shareCategoryId].children.push(id);
   save();
@@ -872,8 +1019,16 @@ function wireEvents() {
   $('addInput').onkeydown   = e => { if (e.key==='Enter') submitAdd(); if (e.key==='Escape') closeModal('addModal'); };
   $('addModal').onclick     = e => { if (e.target===$('addModal')) closeModal('addModal'); };
 
+  // Add Link Modal
+  $('linkUrlInput').oninput    = e => onLinkUrlInput(e.target.value);
+  $('addLinkSaveBtn').onclick  = submitAddLink;
+  $('addLinkCancelBtn').onclick = () => { closeModal('addLinkModal'); addLinkItemId = null; };
+  $('addLinkModal').onclick    = e => { if (e.target === $('addLinkModal')) { closeModal('addLinkModal'); addLinkItemId = null; } };
+  $('linkUrlInput').onkeydown  = e => { if (e.key === 'Enter') { $('linkNameInput').focus(); } if (e.key === 'Escape') { closeModal('addLinkModal'); addLinkItemId = null; } };
+  $('linkNameInput').onkeydown = e => { if (e.key === 'Enter') submitAddLink(); if (e.key === 'Escape') { closeModal('addLinkModal'); addLinkItemId = null; } };
+
   // Rename Modal
-  $('renameCancelBtn').onclick = () => closeModal('renameModal');
+  $('renameCancelBtn').onclick = () => { closeModal('renameModal'); renameLinkTarget = null; renameTarget = null; };
   $('renameSaveBtn').onclick   = submitRename;
   $('renameInput').onkeydown   = e => { if (e.key==='Enter') submitRename(); if (e.key==='Escape') closeModal('renameModal'); };
   $('renameModal').onclick     = e => { if (e.target===$('renameModal')) closeModal('renameModal'); };

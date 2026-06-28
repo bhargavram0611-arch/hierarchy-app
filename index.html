@@ -81,6 +81,21 @@
     </div>
   </div>
 
+  <!-- ── Add Link Modal ── -->
+  <div class="overlay" id="addLinkModal" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h2 class="modal-title">Add Link</h2>
+      <input class="modal-input" id="linkUrlInput" type="url"
+             placeholder="Paste URL…" autocomplete="off" autocorrect="off">
+      <input class="modal-input" id="linkNameInput" type="text"
+             placeholder="Name (auto-detected)…" maxlength="120" autocomplete="off">
+      <div class="modal-actions">
+        <button class="btn-ghost"   id="addLinkCancelBtn">Cancel</button>
+        <button class="btn-primary" id="addLinkSaveBtn">Add</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Rename Modal ── -->
   <div class="overlay" id="renameModal" role="dialog" aria-modal="true">
     <div class="modal">
