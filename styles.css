@@ -418,6 +418,94 @@ body {
 }
 .backdrop.on { display: block; }
 
+/* ── Lock Screen ── */
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(150deg, #4f46e5 0%, #3730a3 100%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  padding-top: calc(24px + env(safe-area-inset-top));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s ease;
+}
+.lock-screen.active { opacity: 1; pointer-events: all; }
+
+.lock-card {
+  background: #fff;
+  border-radius: 20px;
+  padding: 32px 24px 28px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 24px 64px rgba(0,0,0,.35);
+  text-align: center;
+}
+
+@media (prefers-color-scheme: dark) {
+  .lock-card { background: #1e293b; }
+  .lock-app-name, .lock-title { color: #f1f5f9; }
+  .lock-desc { color: #94a3b8; }
+  .lock-card .modal-input { background: #0f172a; color: #f1f5f9; border-color: #334155; }
+}
+
+.lock-logo { font-size: 3rem; line-height: 1; margin-bottom: 6px; }
+.lock-app-name { font-size: 1.4rem; font-weight: 700; color: #1e293b; margin-bottom: 20px; }
+.lock-title { font-size: 1.05rem; font-weight: 600; color: #1e293b; margin-bottom: 6px; }
+.lock-desc  { font-size: .85rem; color: #64748b; margin-bottom: 18px; }
+
+.lock-error {
+  color: #ef4444;
+  font-size: .8rem;
+  min-height: 18px;
+  margin: -4px 0 8px;
+  text-align: left;
+}
+
+.lock-submit {
+  width: 100%;
+  padding: 13px;
+  font-size: 1rem;
+  border-radius: 10px;
+  margin-top: 4px;
+}
+.lock-submit:disabled { opacity: .6; cursor: not-allowed; }
+
+.lock-warning {
+  font-size: .72rem;
+  color: #94a3b8;
+  margin-top: 14px;
+  line-height: 1.5;
+}
+
+/* ── Security options ── */
+.sec-option {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  margin-bottom: 8px;
+  text-align: left;
+  font-size: .9375rem;
+  font-weight: 500;
+  color: var(--text);
+  transition: background var(--t);
+  -webkit-tap-highlight-color: transparent;
+}
+.sec-option:hover { background: var(--bg); }
+.sec-option span  { font-size: .75rem; color: var(--text-2); font-weight: 400; margin-top: 3px; }
+
+/* extra spacing between stacked inputs in change password modal */
+#changePasswordModal .modal-input + .modal-input { margin-top: -4px; }
+
 /* ── Search Overlay ── */
 .search-overlay {
   position: fixed;

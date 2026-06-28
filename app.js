@@ -1,56 +1,117 @@
 'use strict';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-const STORAGE_KEY = 'hierarchyApp_v2';
-const ROOT_ID = 'root';
+const ROOT_ID    = 'root';
+const ENC_KEY    = 'hierarchyApp_enc_v1';
+const SALT_KEY   = 'hierarchyApp_salt_v1';
+const LEGACY_KEY = 'hierarchyApp_v2';       // pre-encryption data
+const ITER       = 200000;                  // PBKDF2 iterations (OWASP 2024)
 
-// ─── State ───────────────────────────────────────────────────────────────────
+// ─── Runtime state ───────────────────────────────────────────────────────────
 let state = {
   nodes: {
-    [ROOT_ID]: {
-      id: ROOT_ID,
-      name: 'My Hierarchy',
-      type: 'category',
-      parentId: null,
-      children: [],
-      createdAt: Date.now()
-    }
+    [ROOT_ID]: { id: ROOT_ID, name: 'My Hierarchy', type: 'category', parentId: null, children: [], createdAt: Date.now() }
   },
-  path: [ROOT_ID]   // navigation stack (array of IDs)
+  path: [ROOT_ID]
 };
 
-let ctxTarget = null;   // ID of node the context menu is open for
+let cryptoKey = null;   // AES-GCM CryptoKey — lives only in memory, never stored
+let ctxTarget = null;
 let drag = { active: false, id: null, ghost: null, source: null, lastTarget: null };
 
-// ─── Persistence ─────────────────────────────────────────────────────────────
-function load() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const saved = JSON.parse(raw);
-    if (saved?.nodes && saved?.path) {
-      state = saved;
-      if (!state.nodes[ROOT_ID]) {
-        state.nodes[ROOT_ID] = { id: ROOT_ID, name: 'My Hierarchy', type: 'category', parentId: null, children: [], createdAt: Date.now() };
-        state.path = [ROOT_ID];
-      }
-      // Sanitize path — drop any IDs that no longer exist
-      state.path = state.path.filter(id => state.nodes[id]);
-      if (!state.path.length) state.path = [ROOT_ID];
-    }
-  } catch (_) {}
+// ─── Crypto helpers ───────────────────────────────────────────────────────────
+const _enc = new TextEncoder();
+const _dec = new TextDecoder();
+const toB64   = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const fromB64 = str => Uint8Array.from(atob(str), c => c.charCodeAt(0));
+
+async function deriveKey(password, salt) {
+  const raw = await crypto.subtle.importKey('raw', _enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: ITER, hash: 'SHA-256' },
+    raw,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
 }
 
-function save() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (_) {}
+async function encryptObj(key, obj) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, _enc.encode(JSON.stringify(obj)));
+  return { iv: toB64(iv), ct: toB64(ct) };
+}
+
+async function decryptObj(key, payload) {
+  const pt = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: fromB64(payload.iv) },
+    key,
+    fromB64(payload.ct)
+  );
+  return JSON.parse(_dec.decode(pt));
+}
+
+// ─── Persistence ─────────────────────────────────────────────────────────────
+async function save() {
+  if (!cryptoKey) return;
+  try {
+    localStorage.setItem(ENC_KEY, JSON.stringify(await encryptObj(cryptoKey, state)));
+  } catch (e) { console.error('save failed', e); }
+}
+
+async function setupPassword(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key  = await deriveKey(password, salt);
+
+  // Migrate any pre-existing unencrypted data
+  try {
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (legacy) {
+      const parsed = JSON.parse(legacy);
+      if (parsed?.nodes && parsed?.path) { state = parsed; sanitizePath(); }
+      localStorage.removeItem(LEGACY_KEY);
+    }
+  } catch (_) {}
+
+  cryptoKey = key;
+  localStorage.setItem(SALT_KEY, toB64(salt));
+  await save();
+}
+
+async function unlock(password) {
+  const saltB64 = localStorage.getItem(SALT_KEY);
+  if (!saltB64) throw new Error('no-salt');
+  const key     = await deriveKey(password, fromB64(saltB64));
+  const raw     = localStorage.getItem(ENC_KEY);
+  if (!raw) throw new Error('no-data');
+  const loaded  = await decryptObj(key, JSON.parse(raw));  // throws on wrong password
+  state = loaded;
+  sanitizePath();
+  cryptoKey = key;
+}
+
+async function changePassword(oldPwd, newPwd) {
+  const saltB64 = localStorage.getItem(SALT_KEY);
+  const oldKey  = await deriveKey(oldPwd, fromB64(saltB64));
+  await decryptObj(oldKey, JSON.parse(localStorage.getItem(ENC_KEY)));  // verify old pwd
+  const newSalt = crypto.getRandomValues(new Uint8Array(16));
+  cryptoKey = await deriveKey(newPwd, newSalt);
+  localStorage.setItem(SALT_KEY, toB64(newSalt));
+  await save();
+}
+
+function sanitizePath() {
+  state.path = (state.path || [ROOT_ID]).filter(id => state.nodes[id]);
+  if (!state.path.length) state.path = [ROOT_ID];
+  if (!state.nodes[ROOT_ID]) {
+    state.nodes[ROOT_ID] = { id: ROOT_ID, name: 'My Hierarchy', type: 'category', parentId: null, children: [], createdAt: Date.now() };
+    state.path = [ROOT_ID];
+  }
 }
 
 // ─── Queries ─────────────────────────────────────────────────────────────────
 const current = () => state.nodes[state.path[state.path.length - 1]];
-
-function childCount(node) {
-  return node.type === 'category' ? (node.children?.length ?? 0) : 0;
-}
+const childCount = node => node.type === 'category' ? (node.children?.length ?? 0) : 0;
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 function addNode(name, type) {
@@ -58,7 +119,7 @@ function addNode(name, type) {
   const id = crypto.randomUUID();
   const node = { id, name: name.trim(), type, parentId: parent.id, createdAt: Date.now() };
   if (type === 'category') node.children = [];
-  if (type === 'item') node.notes = '';
+  if (type === 'item')     node.notes    = '';
   state.nodes[id] = node;
   parent.children.push(id);
   save(); render();
@@ -68,16 +129,11 @@ function renameNode(id, name) {
   if (state.nodes[id]) { state.nodes[id].name = name.trim(); save(); render(); }
 }
 
-// Delete node and all descendants
 function deleteNode(id) {
   _deleteTree(id);
-  save();
-  // Fix path if we deleted something we were inside
   const idx = state.path.indexOf(id);
-  if (idx !== -1) {
-    state.path = state.path.slice(0, Math.max(1, idx));
-  }
-  render();
+  if (idx !== -1) state.path = state.path.slice(0, Math.max(1, idx));
+  save(); render();
 }
 
 function _deleteTree(id) {
@@ -95,6 +151,93 @@ function navInto(id) { state.path.push(id); render(); }
 function navBack()   { if (state.path.length > 1) { state.path.pop(); render(); } }
 function navTo(idx)  { state.path = state.path.slice(0, idx + 1); render(); }
 
+// ─── Lock Screen ─────────────────────────────────────────────────────────────
+function showLockScreen(mode) {
+  const isSetup = mode === 'setup';
+  $('lockTitle').textContent   = isSetup ? 'Set a Password' : 'Unlock App';
+  $('lockDesc').textContent    = isSetup
+    ? 'Your data will be encrypted and protected.'
+    : 'Enter your password to access your data.';
+  $('lockConfirmRow').style.display = isSetup ? 'block' : 'none';
+  $('lockWarning').style.display    = isSetup ? 'block' : 'none';
+  $('lockSubmitBtn').textContent    = isSetup ? 'Set Password' : 'Unlock';
+  $('lockInput').value    = '';
+  $('lockConfirm').value  = '';
+  $('lockError').textContent = '';
+  $('lockSubmitBtn').disabled = false;
+  $('lockScreen').dataset.mode = mode;
+  $('lockScreen').classList.add('active');
+  setTimeout(() => $('lockInput').focus(), 300);
+}
+
+function hideLockScreen() { $('lockScreen').classList.remove('active'); }
+
+async function submitLock() {
+  const mode     = $('lockScreen').dataset.mode;
+  const password = $('lockInput').value;
+  const err      = $('lockError');
+  const btn      = $('lockSubmitBtn');
+  err.textContent = '';
+
+  if (!password) { err.textContent = 'Please enter a password.'; $('lockInput').focus(); return; }
+
+  if (mode === 'setup') {
+    const confirm = $('lockConfirm').value;
+    if (password.length < 4) { err.textContent = 'Minimum 4 characters.'; return; }
+    if (password !== confirm)  { err.textContent = 'Passwords do not match.'; $('lockConfirm').focus(); return; }
+    btn.textContent = 'Setting up…'; btn.disabled = true;
+    try {
+      await setupPassword(password);
+      hideLockScreen(); render();
+    } catch (e) {
+      err.textContent = 'Setup failed. Try again.';
+      btn.textContent = 'Set Password'; btn.disabled = false;
+    }
+  } else {
+    btn.textContent = 'Unlocking…'; btn.disabled = true;
+    try {
+      await unlock(password);
+      hideLockScreen(); render();
+    } catch (e) {
+      err.textContent = 'Incorrect password.';
+      $('lockInput').value = ''; $('lockInput').focus();
+      btn.textContent = 'Unlock'; btn.disabled = false;
+    }
+  }
+}
+
+function lockApp() {
+  cryptoKey = null;
+  closeModal('secSheet');
+  showLockScreen('unlock');
+}
+
+// ─── Change Password ─────────────────────────────────────────────────────────
+async function submitChangePassword() {
+  const oldPwd  = $('cpOld').value;
+  const newPwd  = $('cpNew').value;
+  const confirm = $('cpConfirm').value;
+  const err     = $('cpError');
+  const btn     = $('cpSaveBtn');
+  err.textContent = '';
+
+  if (!oldPwd || !newPwd) { err.textContent = 'All fields required.'; return; }
+  if (newPwd.length < 4)   { err.textContent = 'Minimum 4 characters.'; return; }
+  if (newPwd !== confirm)   { err.textContent = 'New passwords do not match.'; return; }
+
+  btn.textContent = 'Saving…'; btn.disabled = true;
+  try {
+    await changePassword(oldPwd, newPwd);
+    closeModal('changePasswordModal');
+    $('cpOld').value = ''; $('cpNew').value = ''; $('cpConfirm').value = '';
+  } catch (e) {
+    err.textContent = 'Current password is incorrect.';
+    $('cpOld').focus();
+  } finally {
+    btn.textContent = 'Save'; btn.disabled = false;
+  }
+}
+
 // ─── Render ──────────────────────────────────────────────────────────────────
 function render() {
   const node = current();
@@ -111,20 +254,18 @@ function renderItemDetail(node) {
   const listEl = $('itemList');
   listEl.innerHTML = '';
 
-  const editor = el('div', 'notes-editor');
-
+  const editor   = el('div', 'notes-editor');
   const textarea = el('textarea', 'notes-textarea');
   textarea.placeholder = 'Write your notes here…';
   textarea.value = node.notes || '';
   textarea.setAttribute('aria-label', 'Notes for ' + node.name);
 
   const status = el('div', 'save-status');
-
-  let saveTimer;
+  let timer;
   textarea.oninput = () => {
-    clearTimeout(saveTimer);
+    clearTimeout(timer);
     status.textContent = '';
-    saveTimer = setTimeout(() => {
+    timer = setTimeout(() => {
       node.notes = textarea.value;
       save();
       status.textContent = '✓ Saved';
@@ -139,10 +280,9 @@ function renderItemDetail(node) {
 }
 
 function renderHeader() {
-  const node = current();
   const atRoot = state.path.length === 1;
   $('backBtn').style.display = atRoot ? 'none' : 'flex';
-  $('headerTitle').textContent = node.name;
+  $('headerTitle').textContent = current().name;
 }
 
 function renderBreadcrumb() {
@@ -151,9 +291,7 @@ function renderBreadcrumb() {
   state.path.forEach((id, i) => {
     const node = state.nodes[id];
     if (!node) return;
-    if (i > 0) {
-      const sep = el('span', 'bc-sep'); sep.textContent = '›'; bc.appendChild(sep);
-    }
+    if (i > 0) { const s = el('span', 'bc-sep'); s.textContent = '›'; bc.appendChild(s); }
     const wrap = el('span', 'bc-item');
     const btn  = el('button', 'bc-btn');
     btn.textContent = i === 0 ? '⌂ Home' : node.name;
@@ -165,33 +303,22 @@ function renderBreadcrumb() {
 }
 
 function renderList() {
-  const node = current();
+  const node    = current();
   const emptyEl = $('emptyState');
   const listEl  = $('itemList');
+  const kids    = (node.children ?? []).map(id => state.nodes[id]).filter(Boolean);
 
-  const kids = (node.children ?? []).map(id => state.nodes[id]).filter(Boolean);
-
-  if (!kids.length) {
-    emptyEl.style.display = 'block';
-    listEl.innerHTML = '';
-    return;
-  }
-
+  if (!kids.length) { emptyEl.style.display = 'block'; listEl.innerHTML = ''; return; }
   emptyEl.style.display = 'none';
   listEl.innerHTML = '';
-
   kids.forEach((n, i) => {
-    const li   = el('li');
-    const card = makeCard(n, i);
-    li.appendChild(card);
-    listEl.appendChild(li);
+    const li = el('li'); li.appendChild(makeCard(n, i)); listEl.appendChild(li);
   });
 }
 
 function makeCard(node, idx) {
   const isCat = node.type === 'category';
-
-  const card = el('div', 'item-card');
+  const card  = el('div', 'item-card');
   card.dataset.id = node.id;
   card.style.animationDelay = `${idx * 30}ms`;
 
@@ -209,7 +336,7 @@ function makeCard(node, idx) {
   card.appendChild(ico);
 
   // Info
-  const info = el('div', 'item-info');
+  const info   = el('div', 'item-info');
   const nameEl = el('div', 'item-name');
   nameEl.textContent = node.name;
   info.appendChild(nameEl);
@@ -225,10 +352,8 @@ function makeCard(node, idx) {
   }
   card.appendChild(info);
 
-  // Chevron for all (categories navigate in, items open notes)
-  const chev = el('div', 'item-chevron');
-  chev.innerHTML = ICON_CHEV;
-  card.appendChild(chev);
+  // Chevron
+  const chev = el('div', 'item-chevron'); chev.innerHTML = ICON_CHEV; card.appendChild(chev);
 
   // More button
   const moreBtn = el('button', 'item-more');
@@ -237,16 +362,15 @@ function makeCard(node, idx) {
   moreBtn.onclick = e => { e.stopPropagation(); openCtxMenu(e, node.id); };
   card.appendChild(moreBtn);
 
-  // All cards navigate on click (ignore handle and more-btn)
   card.addEventListener('click', e => {
     if (e.target.closest('.item-more') || e.target.closest('.drag-handle')) return;
     navInto(node.id);
   });
 
-  // Long-press → context menu (mobile)
+  // Long-press → context menu
   let lpTimer;
   card.addEventListener('touchstart', e => {
-    if (e.target.closest('.item-more')) return;
+    if (e.target.closest('.item-more') || e.target.closest('.drag-handle')) return;
     lpTimer = setTimeout(() => {
       const t = e.touches[0];
       openCtxMenuAt(t.clientX, t.clientY, node.id);
@@ -264,7 +388,7 @@ function reorderNode(dragId, targetId, insertBefore) {
   const n = state.nodes[dragId], t = state.nodes[targetId];
   if (!n || !t || n.parentId !== t.parentId) return;
   const children = state.nodes[n.parentId].children;
-  const fromIdx = children.indexOf(dragId);
+  const fromIdx  = children.indexOf(dragId);
   if (fromIdx === -1) return;
   children.splice(fromIdx, 1);
   const toIdx = children.indexOf(targetId);
@@ -273,25 +397,21 @@ function reorderNode(dragId, targetId, insertBefore) {
 }
 
 function clearDropIndicators() {
-  document.querySelectorAll('.drop-above, .drop-below')
-    .forEach(el => el.classList.remove('drop-above', 'drop-below'));
+  document.querySelectorAll('.drop-above,.drop-below')
+    .forEach(e => e.classList.remove('drop-above', 'drop-below'));
 }
 
 function startDrag(e, card, nodeId) {
   if (e.button !== undefined && e.button !== 0) return;
   e.preventDefault();
-
   const startX = e.clientX, startY = e.clientY;
-  const rect = card.getBoundingClientRect();
+  const rect   = card.getBoundingClientRect();
   let activated = false;
 
   function activate() {
     activated = true;
-    drag.active = true;
-    drag.id = nodeId;
-    drag.source = card;
+    drag.active = true; drag.id = nodeId; drag.source = card;
     drag.offsetY = startY - rect.top;
-
     const g = card.cloneNode(true);
     g.className = 'item-card drag-ghost';
     Object.assign(g.style, { width: rect.width + 'px', top: rect.top + 'px', left: rect.left + 'px' });
@@ -301,17 +421,13 @@ function startDrag(e, card, nodeId) {
   }
 
   function move(ev) {
-    const dx = ev.clientX - startX, dy = ev.clientY - startY;
-    if (!activated && Math.hypot(dx, dy) < 6) return;
+    if (!activated && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
     if (!activated) activate();
     ev.preventDefault();
-
     drag.ghost.style.top = (ev.clientY - drag.offsetY) + 'px';
-
     drag.ghost.style.visibility = 'hidden';
     const under = document.elementFromPoint(ev.clientX, ev.clientY);
     drag.ghost.style.visibility = '';
-
     clearDropIndicators();
     const tc = under?.closest('[data-id]');
     if (tc && tc !== card) {
@@ -319,9 +435,7 @@ function startDrag(e, card, nodeId) {
       const before = ev.clientY < r.top + r.height / 2;
       drag.lastTarget = { id: tc.dataset.id, before };
       tc.classList.add(before ? 'drop-above' : 'drop-below');
-    } else {
-      drag.lastTarget = null;
-    }
+    } else { drag.lastTarget = null; }
   }
 
   function up() {
@@ -339,6 +453,103 @@ function startDrag(e, card, nodeId) {
   document.addEventListener('pointerup', up);
 }
 
+// ─── Search ──────────────────────────────────────────────────────────────────
+function openSearch() {
+  $('searchOverlay').classList.add('active');
+  setTimeout(() => $('searchInput').focus(), 120);
+}
+
+function closeSearch() {
+  $('searchOverlay').classList.remove('active');
+  $('searchInput').value = '';
+  $('searchResults').innerHTML = '';
+}
+
+function performSearch(raw) {
+  const q = raw.trim().toLowerCase();
+  const resultsEl = $('searchResults');
+  resultsEl.innerHTML = '';
+  if (!q) return;
+
+  const matches = Object.values(state.nodes).filter(n =>
+    n.id !== ROOT_ID && (
+      n.name.toLowerCase().includes(q) ||
+      n.notes?.toLowerCase().includes(q)
+    )
+  );
+
+  if (!matches.length) {
+    const empty = el('div', 'search-empty'); empty.textContent = 'No results found';
+    resultsEl.appendChild(empty); return;
+  }
+
+  matches.slice(0, 60).forEach(node => {
+    const isCat = node.type === 'category';
+    const row   = el('div', 'search-result');
+
+    const ico = el('div', `item-ico ${isCat ? 'cat' : 'leaf'} search-ico`);
+    ico.innerHTML = isCat ? ICON_FOLDER : ICON_ITEM;
+    row.appendChild(ico);
+
+    const info   = el('div', 'item-info');
+    const nameEl = el('div', 'item-name');
+    nameEl.innerHTML = highlight(node.name, q);
+    info.appendChild(nameEl);
+
+    const pathStr = getNodePath(node.id);
+    if (pathStr) {
+      const pathEl = el('div', 'search-path'); pathEl.textContent = pathStr; info.appendChild(pathEl);
+    }
+
+    if (!isCat && node.notes?.trim()) {
+      const snip = findNoteSnippet(node.notes, q);
+      if (snip) {
+        const snipEl = el('div', 'search-snippet'); snipEl.innerHTML = snip; info.appendChild(snipEl);
+      }
+    }
+
+    row.appendChild(info);
+    const chev = el('div', 'item-chevron'); chev.innerHTML = ICON_CHEV; row.appendChild(chev);
+    row.onclick = () => { closeSearch(); navigateToNode(node.id); };
+    resultsEl.appendChild(row);
+  });
+}
+
+function getNodePath(id) {
+  const parts = [];
+  let cur = state.nodes[state.nodes[id]?.parentId];
+  while (cur) {
+    parts.unshift(cur.id === ROOT_ID ? 'Home' : cur.name);
+    if (!cur.parentId) break;
+    cur = state.nodes[cur.parentId];
+  }
+  return parts.join(' › ');
+}
+
+function navigateToNode(id) {
+  const node = state.nodes[id]; if (!node) return;
+  const pathIds = [];
+  let cur = node;
+  while (cur) { pathIds.unshift(cur.id); if (!cur.parentId) break; cur = state.nodes[cur.parentId]; }
+  state.path = pathIds; render();
+}
+
+function highlight(text, q) {
+  const i = text.toLowerCase().indexOf(q);
+  if (i === -1) return escapeHtml(text);
+  return escapeHtml(text.slice(0, i)) +
+    `<mark>${escapeHtml(text.slice(i, i + q.length))}</mark>` +
+    escapeHtml(text.slice(i + q.length));
+}
+
+function findNoteSnippet(notes, q) {
+  const i = notes.toLowerCase().indexOf(q);
+  if (i === -1) return null;
+  const s = Math.max(0, i - 30), e = Math.min(notes.length, i + q.length + 50);
+  const raw = (s > 0 ? '…' : '') + notes.slice(s, e).replace(/\n/g, ' ') + (e < notes.length ? '…' : '');
+  return highlight(raw, q);
+}
+
 // ─── Context Menu ─────────────────────────────────────────────────────────────
 function openCtxMenu(e, id) {
   const rect = e.currentTarget.getBoundingClientRect();
@@ -350,13 +561,10 @@ function openCtxMenuAt(x, y, id) {
   const menu = $('ctxMenu');
   menu.classList.add('open');
   $('backdrop').classList.add('on');
-
-  // Position
   const mw = 180, mh = 110;
   const left = Math.max(8, Math.min(x - mw, window.innerWidth - mw - 8));
   const top  = (y + mh > window.innerHeight - 8) ? y - mh - 4 : y + 4;
-  menu.style.left = `${left}px`;
-  menu.style.top  = `${top}px`;
+  menu.style.left = `${left}px`; menu.style.top = `${top}px`;
 }
 
 function closeCtxMenu() {
@@ -410,164 +618,42 @@ function closeModal(id) { $(id).classList.remove('open'); }
 
 function shake(inputId) {
   const inp = $(inputId);
-  inp.classList.remove('shake');
-  void inp.offsetWidth;   // force reflow
-  inp.classList.add('shake');
-  inp.focus();
+  inp.classList.remove('shake'); void inp.offsetWidth;
+  inp.classList.add('shake'); inp.focus();
 }
 
 // ─── DOM helpers ──────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
-function el(tag, cls) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  return e;
-}
+function el(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // ─── SVG Icons ───────────────────────────────────────────────────────────────
-const ICON_FOLDER = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-  <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z"/>
-</svg>`;
-
-const ICON_ITEM = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-  <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
-</svg>`;
-
-const ICON_CHEV = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-  <path d="M8.59 16.58L13.17 12 8.59 7.41 10 6l6 6-6 6z"/>
-</svg>`;
-
-const ICON_DOTS = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-  <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
-</svg>`;
-
-const ICON_DRAG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-  <circle cx="9" cy="5" r="2"/><circle cx="15" cy="5" r="2"/>
-  <circle cx="9" cy="12" r="2"/><circle cx="15" cy="12" r="2"/>
-  <circle cx="9" cy="19" r="2"/><circle cx="15" cy="19" r="2"/>
-</svg>`;
-
-const ICON_BACK = `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-  <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-</svg>`;
-
-// ─── Search ──────────────────────────────────────────────────────────────────
-function openSearch() {
-  $('searchOverlay').classList.add('active');
-  setTimeout(() => $('searchInput').focus(), 120);
-}
-
-function closeSearch() {
-  $('searchOverlay').classList.remove('active');
-  $('searchInput').value = '';
-  $('searchResults').innerHTML = '';
-}
-
-function performSearch(raw) {
-  const q = raw.trim().toLowerCase();
-  const resultsEl = $('searchResults');
-  resultsEl.innerHTML = '';
-  if (!q) return;
-
-  const matches = Object.values(state.nodes).filter(n =>
-    n.id !== ROOT_ID && (
-      n.name.toLowerCase().includes(q) ||
-      (n.notes?.toLowerCase().includes(q))
-    )
-  );
-
-  if (!matches.length) {
-    const empty = el('div', 'search-empty');
-    empty.textContent = 'No results found';
-    resultsEl.appendChild(empty);
-    return;
-  }
-
-  matches.slice(0, 60).forEach(node => {
-    const isCat = node.type === 'category';
-    const row = el('div', 'search-result');
-
-    const ico = el('div', `item-ico ${isCat ? 'cat' : 'leaf'} search-ico`);
-    ico.innerHTML = isCat ? ICON_FOLDER : ICON_ITEM;
-    row.appendChild(ico);
-
-    const info = el('div', 'item-info');
-    const nameEl = el('div', 'item-name');
-    nameEl.innerHTML = highlight(node.name, q);
-    info.appendChild(nameEl);
-
-    const pathStr = getNodePath(node.id);
-    if (pathStr) {
-      const pathEl = el('div', 'search-path');
-      pathEl.textContent = pathStr;
-      info.appendChild(pathEl);
-    }
-
-    if (!isCat && node.notes?.trim()) {
-      const noteMatch = findNoteSnippet(node.notes, q);
-      if (noteMatch) {
-        const snip = el('div', 'search-snippet');
-        snip.innerHTML = noteMatch;
-        info.appendChild(snip);
-      }
-    }
-
-    row.appendChild(info);
-    const chev = el('div', 'item-chevron');
-    chev.innerHTML = ICON_CHEV;
-    row.appendChild(chev);
-
-    row.onclick = () => { closeSearch(); navigateToNode(node.id); };
-    resultsEl.appendChild(row);
-  });
-}
-
-function getNodePath(id) {
-  const parts = [];
-  let cur = state.nodes[state.nodes[id]?.parentId];
-  while (cur) {
-    parts.unshift(cur.id === ROOT_ID ? 'Home' : cur.name);
-    if (!cur.parentId) break;
-    cur = state.nodes[cur.parentId];
-  }
-  return parts.join(' › ');
-}
-
-function navigateToNode(id) {
-  const node = state.nodes[id];
-  if (!node) return;
-  const pathIds = [];
-  let cur = node;
-  while (cur) { pathIds.unshift(cur.id); if (!cur.parentId) break; cur = state.nodes[cur.parentId]; }
-  state.path = pathIds;
-  render();
-}
-
-function highlight(text, q) {
-  const i = text.toLowerCase().indexOf(q);
-  if (i === -1) return escapeHtml(text);
-  return escapeHtml(text.slice(0, i)) +
-    `<mark>${escapeHtml(text.slice(i, i + q.length))}</mark>` +
-    escapeHtml(text.slice(i + q.length));
-}
-
-function findNoteSnippet(notes, q) {
-  const lower = notes.toLowerCase();
-  const i = lower.indexOf(q);
-  if (i === -1) return null;
-  const start = Math.max(0, i - 30);
-  const end   = Math.min(notes.length, i + q.length + 50);
-  const raw   = (start > 0 ? '…' : '') + notes.slice(start, end).replace(/\n/g, ' ') + (end < notes.length ? '…' : '');
-  return highlight(raw, q);
-}
+const ICON_FOLDER = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z"/></svg>`;
+const ICON_ITEM   = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>`;
+const ICON_CHEV   = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.58L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>`;
+const ICON_DOTS   = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`;
+const ICON_DRAG   = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="5" r="2"/><circle cx="15" cy="5" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="19" r="2"/><circle cx="15" cy="19" r="2"/></svg>`;
+const ICON_BACK   = `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>`;
+const ICON_LOCK   = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
 
 // ─── Event wiring ─────────────────────────────────────────────────────────────
 function wireEvents() {
-  // Search
-  $('searchBtn').onclick   = openSearch;
-  $('searchCloseBtn').onclick = closeSearch;
-  $('searchInput').oninput = e => performSearch(e.target.value);
-  $('searchInput').addEventListener('keydown', e => { if (e.key === 'Escape') closeSearch(); });
+  // Lock screen
+  $('lockSubmitBtn').onclick = submitLock;
+  $('lockInput').onkeydown   = e => { if (e.key === 'Enter') submitLock(); };
+  $('lockConfirm').onkeydown = e => { if (e.key === 'Enter') submitLock(); };
+
+  // Security sheet (lock icon in header)
+  $('secBtn').onclick       = () => openModal('secSheet');
+  $('secLockBtn').onclick   = lockApp;
+  $('secChangePwdBtn').onclick = () => { closeModal('secSheet'); openModal('changePasswordModal'); $('cpOld').value=''; $('cpNew').value=''; $('cpConfirm').value=''; $('cpError').textContent=''; setTimeout(()=>$('cpOld').focus(),300); };
+  $('secCancelBtn').onclick = () => closeModal('secSheet');
+  $('secSheet').onclick     = e => { if (e.target === $('secSheet')) closeModal('secSheet'); };
+
+  // Change password modal
+  $('cpSaveBtn').onclick    = submitChangePassword;
+  $('cpCancelBtn').onclick  = () => closeModal('changePasswordModal');
+  $('changePasswordModal').onclick = e => { if (e.target === $('changePasswordModal')) closeModal('changePasswordModal'); };
 
   // Back button
   $('backBtn').onclick = navBack;
@@ -575,62 +661,44 @@ function wireEvents() {
   // FAB
   $('fab').onclick = openAddModal;
 
-  // Add Modal – type toggle
-  $('typeCatBtn').onclick = () => {
-    addType = 'category';
-    $('typeCatBtn').classList.add('active');
-    $('typeItemBtn').classList.remove('active');
-  };
-  $('typeItemBtn').onclick = () => {
-    addType = 'item';
-    $('typeItemBtn').classList.add('active');
-    $('typeCatBtn').classList.remove('active');
-  };
-
+  // Add Modal
+  $('typeCatBtn').onclick = () => { addType='category'; $('typeCatBtn').classList.add('active'); $('typeItemBtn').classList.remove('active'); };
+  $('typeItemBtn').onclick = () => { addType='item'; $('typeItemBtn').classList.add('active'); $('typeCatBtn').classList.remove('active'); };
   $('addCancelBtn').onclick = () => closeModal('addModal');
   $('addSaveBtn').onclick   = submitAdd;
-  $('addInput').onkeydown   = e => { if (e.key === 'Enter') submitAdd(); if (e.key === 'Escape') closeModal('addModal'); };
-  $('addModal').onclick     = e => { if (e.target === $('addModal')) closeModal('addModal'); };
+  $('addInput').onkeydown   = e => { if (e.key==='Enter') submitAdd(); if (e.key==='Escape') closeModal('addModal'); };
+  $('addModal').onclick     = e => { if (e.target===$('addModal')) closeModal('addModal'); };
 
   // Rename Modal
   $('renameCancelBtn').onclick = () => closeModal('renameModal');
   $('renameSaveBtn').onclick   = submitRename;
-  $('renameInput').onkeydown   = e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') closeModal('renameModal'); };
-  $('renameModal').onclick     = e => { if (e.target === $('renameModal')) closeModal('renameModal'); };
+  $('renameInput').onkeydown   = e => { if (e.key==='Enter') submitRename(); if (e.key==='Escape') closeModal('renameModal'); };
+  $('renameModal').onclick     = e => { if (e.target===$('renameModal')) closeModal('renameModal'); };
 
   // Context Menu
-  $('ctxRename').onclick = () => {
-    const id = ctxTarget;
-    closeCtxMenu();
-    openRenameModal(id);
-  };
-
+  $('ctxRename').onclick = () => { const id=ctxTarget; closeCtxMenu(); openRenameModal(id); };
   $('ctxDelete').onclick = () => {
-    const id = ctxTarget;
-    const node = state.nodes[id];
-    closeCtxMenu();
-    if (!node) return;
-
+    const id=ctxTarget, node=state.nodes[id]; closeCtxMenu(); if (!node) return;
     let msg = `Delete "${node.name}"?`;
-    if (node.type === 'category' && childCount(node) > 0) {
-      msg = `Delete "${node.name}" and all its contents?\n\nThis cannot be undone.`;
-    }
+    if (node.type==='category' && childCount(node)>0) msg=`Delete "${node.name}" and all its contents?\n\nThis cannot be undone.`;
     if (confirm(msg)) deleteNode(id);
   };
-
-  // Backdrop closes context menu
   $('backdrop').onclick = closeCtxMenu;
 
-  // Keyboard
+  // Search
+  $('searchBtn').onclick      = openSearch;
+  $('searchCloseBtn').onclick = closeSearch;
+  $('searchInput').oninput    = e => performSearch(e.target.value);
+  $('searchInput').onkeydown  = e => { if (e.key==='Escape') closeSearch(); };
+
+  // Keyboard shortcuts
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { closeCtxMenu(); closeSearch(); }
-    if (e.key === 'Backspace' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
-      e.preventDefault();
-      navBack();
+    if (e.key === 'Escape') { closeCtxMenu(); closeSearch(); closeModal('secSheet'); }
+    if (e.key === 'Backspace' && !['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) {
+      e.preventDefault(); navBack();
     }
   });
 
-  // Prevent pinch zoom on mobile (optional, good for app-feel)
   document.addEventListener('touchmove', e => {
     if (e.touches.length > 1) e.preventDefault();
   }, { passive: false });
@@ -638,16 +706,31 @@ function wireEvents() {
 
 // ─── Service Worker ───────────────────────────────────────────────────────────
 function registerSW() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
-  }
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+async function init() {
   $('backBtn').innerHTML = ICON_BACK;
-  load();
+  $('secBtn').innerHTML  = ICON_LOCK;
   wireEvents();
-  render();
   registerSW();
-});
+
+  const hasPassword = !!localStorage.getItem(SALT_KEY);
+  const hasLegacy   = !!localStorage.getItem(LEGACY_KEY);
+
+  if (!hasPassword) {
+    showLockScreen('setup');
+    // Pre-load legacy data into state so it gets migrated on password setup
+    if (hasLegacy) {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(LEGACY_KEY));
+        if (parsed?.nodes && parsed?.path) { state = parsed; sanitizePath(); }
+      } catch (_) {}
+    }
+  } else {
+    showLockScreen('unlock');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', init);

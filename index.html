@@ -27,6 +27,7 @@
         <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
       </svg>
     </button>
+    <button class="btn-icon" id="secBtn" aria-label="Security"></button>
   </header>
 
   <!-- ── Search Overlay ── -->
@@ -112,6 +113,60 @@
 
   <!-- ── Backdrop (closes context menu) ── -->
   <div class="backdrop" id="backdrop"></div>
+
+  <!-- ── Lock Screen ── -->
+  <div class="lock-screen" id="lockScreen">
+    <div class="lock-card">
+      <div class="lock-logo">🔐</div>
+      <p class="lock-app-name">HierarchyApp</p>
+      <h2 class="lock-title" id="lockTitle">Unlock App</h2>
+      <p class="lock-desc" id="lockDesc">Enter your password to access your data.</p>
+      <input class="modal-input" id="lockInput" type="password"
+             placeholder="Password…" autocomplete="current-password">
+      <div id="lockConfirmRow" style="display:none">
+        <input class="modal-input" id="lockConfirm" type="password"
+               placeholder="Confirm password…" autocomplete="new-password">
+      </div>
+      <div class="lock-error" id="lockError"></div>
+      <button class="btn-primary lock-submit" id="lockSubmitBtn">Unlock</button>
+      <p class="lock-warning" id="lockWarning" style="display:none">
+        ⚠️ If you forget your password, your data cannot be recovered.
+      </p>
+    </div>
+  </div>
+
+  <!-- ── Security Sheet ── -->
+  <div class="overlay" id="secSheet" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h2 class="modal-title">Security</h2>
+      <button class="sec-option" id="secLockBtn">
+        🔒 Lock App
+        <span>Require password to continue</span>
+      </button>
+      <button class="sec-option" id="secChangePwdBtn">
+        🔑 Change Password
+        <span>Re-encrypt data with a new password</span>
+      </button>
+      <div class="modal-actions" style="margin-top:8px">
+        <button class="btn-ghost" id="secCancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Change Password Modal ── -->
+  <div class="overlay" id="changePasswordModal" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h2 class="modal-title">Change Password</h2>
+      <input class="modal-input" id="cpOld"     type="password" placeholder="Current password…"     autocomplete="current-password">
+      <input class="modal-input" id="cpNew"     type="password" placeholder="New password…"         autocomplete="new-password">
+      <input class="modal-input" id="cpConfirm" type="password" placeholder="Confirm new password…" autocomplete="new-password">
+      <div class="lock-error" id="cpError"></div>
+      <div class="modal-actions">
+        <button class="btn-ghost"   id="cpCancelBtn">Cancel</button>
+        <button class="btn-primary" id="cpSaveBtn">Save</button>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>
