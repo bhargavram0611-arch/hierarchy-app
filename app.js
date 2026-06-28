@@ -705,6 +705,7 @@ function makeCard(node, idx) {
   const info   = el('div', 'item-info');
   const nameEl = el('div', 'item-name');
   nameEl.textContent = node.name;
+  if (node.done) nameEl.classList.add('strikethrough');
   info.appendChild(nameEl);
   if (isCat) {
     const meta = el('div', 'item-meta');

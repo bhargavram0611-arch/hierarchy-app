@@ -1,4 +1,4 @@
-const CACHE = 'hierarchy-v9';
+const CACHE = 'hierarchy-v10';
 const ASSETS = ['./index.html', './styles.css', './app.js', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
