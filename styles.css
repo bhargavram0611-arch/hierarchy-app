@@ -418,6 +418,108 @@ body {
 }
 .backdrop.on { display: block; }
 
+/* ── Search Overlay ── */
+.search-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(100%);
+  transition: transform .25s cubic-bezier(.32,.72,0,1);
+}
+.search-overlay.active { transform: translateY(0); }
+
+.search-bar {
+  background: var(--primary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  padding-top: calc(6px + env(safe-area-inset-top));
+  flex-shrink: 0;
+}
+
+.search-back {
+  color: white;
+  flex-shrink: 0;
+}
+
+.search-input {
+  flex: 1;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 9px;
+  font-size: 1rem;
+  background: rgba(255,255,255,.18);
+  color: white;
+  outline: none;
+  -webkit-appearance: none;
+}
+.search-input::placeholder { color: rgba(255,255,255,.65); }
+.search-input::-webkit-search-cancel-button { display: none; }
+
+.search-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.search-result {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  cursor: pointer;
+  margin-bottom: 7px;
+  box-shadow: var(--shadow-s);
+  transition: border-color var(--t);
+  -webkit-tap-highlight-color: transparent;
+}
+.search-result:hover { border-color: var(--primary-light); }
+.search-result:active { background: var(--bg); }
+
+.search-ico { flex-shrink: 0; }
+
+.search-path {
+  font-size: .72rem;
+  color: var(--text-2);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-snippet {
+  font-size: .78rem;
+  color: var(--text-2);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: italic;
+}
+
+mark {
+  background: rgba(79,70,229,.18);
+  color: var(--primary);
+  border-radius: 2px;
+  padding: 0 1px;
+  font-style: normal;
+}
+
+.search-empty {
+  text-align: center;
+  padding: 60px 24px;
+  color: var(--text-2);
+  font-size: .9rem;
+}
+
 /* ── Notes Preview on item cards ── */
 .notes-preview {
   font-style: italic;

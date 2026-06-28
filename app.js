@@ -451,8 +451,124 @@ const ICON_BACK = `<svg width="24" height="24" viewBox="0 0 24 24" fill="current
   <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
 </svg>`;
 
+// ─── Search ──────────────────────────────────────────────────────────────────
+function openSearch() {
+  $('searchOverlay').classList.add('active');
+  setTimeout(() => $('searchInput').focus(), 120);
+}
+
+function closeSearch() {
+  $('searchOverlay').classList.remove('active');
+  $('searchInput').value = '';
+  $('searchResults').innerHTML = '';
+}
+
+function performSearch(raw) {
+  const q = raw.trim().toLowerCase();
+  const resultsEl = $('searchResults');
+  resultsEl.innerHTML = '';
+  if (!q) return;
+
+  const matches = Object.values(state.nodes).filter(n =>
+    n.id !== ROOT_ID && (
+      n.name.toLowerCase().includes(q) ||
+      (n.notes?.toLowerCase().includes(q))
+    )
+  );
+
+  if (!matches.length) {
+    const empty = el('div', 'search-empty');
+    empty.textContent = 'No results found';
+    resultsEl.appendChild(empty);
+    return;
+  }
+
+  matches.slice(0, 60).forEach(node => {
+    const isCat = node.type === 'category';
+    const row = el('div', 'search-result');
+
+    const ico = el('div', `item-ico ${isCat ? 'cat' : 'leaf'} search-ico`);
+    ico.innerHTML = isCat ? ICON_FOLDER : ICON_ITEM;
+    row.appendChild(ico);
+
+    const info = el('div', 'item-info');
+    const nameEl = el('div', 'item-name');
+    nameEl.innerHTML = highlight(node.name, q);
+    info.appendChild(nameEl);
+
+    const pathStr = getNodePath(node.id);
+    if (pathStr) {
+      const pathEl = el('div', 'search-path');
+      pathEl.textContent = pathStr;
+      info.appendChild(pathEl);
+    }
+
+    if (!isCat && node.notes?.trim()) {
+      const noteMatch = findNoteSnippet(node.notes, q);
+      if (noteMatch) {
+        const snip = el('div', 'search-snippet');
+        snip.innerHTML = noteMatch;
+        info.appendChild(snip);
+      }
+    }
+
+    row.appendChild(info);
+    const chev = el('div', 'item-chevron');
+    chev.innerHTML = ICON_CHEV;
+    row.appendChild(chev);
+
+    row.onclick = () => { closeSearch(); navigateToNode(node.id); };
+    resultsEl.appendChild(row);
+  });
+}
+
+function getNodePath(id) {
+  const parts = [];
+  let cur = state.nodes[state.nodes[id]?.parentId];
+  while (cur) {
+    parts.unshift(cur.id === ROOT_ID ? 'Home' : cur.name);
+    if (!cur.parentId) break;
+    cur = state.nodes[cur.parentId];
+  }
+  return parts.join(' › ');
+}
+
+function navigateToNode(id) {
+  const node = state.nodes[id];
+  if (!node) return;
+  const pathIds = [];
+  let cur = node;
+  while (cur) { pathIds.unshift(cur.id); if (!cur.parentId) break; cur = state.nodes[cur.parentId]; }
+  state.path = pathIds;
+  render();
+}
+
+function highlight(text, q) {
+  const i = text.toLowerCase().indexOf(q);
+  if (i === -1) return escapeHtml(text);
+  return escapeHtml(text.slice(0, i)) +
+    `<mark>${escapeHtml(text.slice(i, i + q.length))}</mark>` +
+    escapeHtml(text.slice(i + q.length));
+}
+
+function findNoteSnippet(notes, q) {
+  const lower = notes.toLowerCase();
+  const i = lower.indexOf(q);
+  if (i === -1) return null;
+  const start = Math.max(0, i - 30);
+  const end   = Math.min(notes.length, i + q.length + 50);
+  const raw   = (start > 0 ? '…' : '') + notes.slice(start, end).replace(/\n/g, ' ') + (end < notes.length ? '…' : '');
+  return highlight(raw, q);
+}
+
 // ─── Event wiring ─────────────────────────────────────────────────────────────
 function wireEvents() {
+  // Search
+  $('searchBtn').onclick   = openSearch;
+  $('searchCloseBtn').onclick = closeSearch;
+  $('searchInput').oninput = e => performSearch(e.target.value);
+  $('searchInput').addEventListener('keydown', e => { if (e.key === 'Escape') closeSearch(); });
+
   // Back button
   $('backBtn').onclick = navBack;
 
@@ -507,7 +623,7 @@ function wireEvents() {
 
   // Keyboard
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closeCtxMenu();
+    if (e.key === 'Escape') { closeCtxMenu(); closeSearch(); }
     if (e.key === 'Backspace' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
       e.preventDefault();
       navBack();
