@@ -178,7 +178,6 @@ body {
 }
 .item-card:hover { border-color: var(--primary-light); box-shadow: var(--shadow-m); }
 .item-card:active { background: var(--bg); }
-.item-card.is-item { cursor: default; }
 
 .item-ico {
   width: 42px;
@@ -418,6 +417,53 @@ body {
   display: none;
 }
 .backdrop.on { display: block; }
+
+/* ── Notes Preview on item cards ── */
+.notes-preview {
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Notes Editor ── */
+.notes-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - var(--header-h) - env(safe-area-inset-top) - 40px - 60px);
+}
+
+.notes-textarea {
+  flex: 1;
+  min-height: 260px;
+  width: 100%;
+  padding: 16px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1rem;
+  font-family: inherit;
+  line-height: 1.7;
+  resize: none;
+  outline: none;
+  box-shadow: var(--shadow-s);
+  transition: border-color var(--t), box-shadow var(--t);
+  -webkit-appearance: none;
+}
+.notes-textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(79,70,229,.1);
+}
+
+.save-status {
+  height: 22px;
+  text-align: right;
+  font-size: .72rem;
+  color: var(--primary);
+  padding-top: 5px;
+  opacity: .8;
+}
 
 /* ── Fade-in animation for list items ── */
 @keyframes fade-up {

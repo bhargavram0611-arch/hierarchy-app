@@ -57,6 +57,7 @@ function addNode(name, type) {
   const id = crypto.randomUUID();
   const node = { id, name: name.trim(), type, parentId: parent.id, createdAt: Date.now() };
   if (type === 'category') node.children = [];
+  if (type === 'item') node.notes = '';
   state.nodes[id] = node;
   parent.children.push(id);
   save(); render();
@@ -95,9 +96,45 @@ function navTo(idx)  { state.path = state.path.slice(0, idx + 1); render(); }
 
 // ─── Render ──────────────────────────────────────────────────────────────────
 function render() {
+  const node = current();
+  const isDetail = node.type === 'item';
   renderHeader();
   renderBreadcrumb();
-  renderList();
+  $('fab').style.display = isDetail ? 'none' : 'flex';
+  if (isDetail) renderItemDetail(node);
+  else renderList();
+}
+
+function renderItemDetail(node) {
+  $('emptyState').style.display = 'none';
+  const listEl = $('itemList');
+  listEl.innerHTML = '';
+
+  const editor = el('div', 'notes-editor');
+
+  const textarea = el('textarea', 'notes-textarea');
+  textarea.placeholder = 'Write your notes here…';
+  textarea.value = node.notes || '';
+  textarea.setAttribute('aria-label', 'Notes for ' + node.name);
+
+  const status = el('div', 'save-status');
+
+  let saveTimer;
+  textarea.oninput = () => {
+    clearTimeout(saveTimer);
+    status.textContent = '';
+    saveTimer = setTimeout(() => {
+      node.notes = textarea.value;
+      save();
+      status.textContent = '✓ Saved';
+      setTimeout(() => { status.textContent = ''; }, 1500);
+    }, 600);
+  };
+
+  editor.appendChild(textarea);
+  editor.appendChild(status);
+  listEl.appendChild(editor);
+  setTimeout(() => textarea.focus(), 150);
 }
 
 function renderHeader() {
@@ -156,7 +193,7 @@ function renderList() {
 function makeCard(node, idx) {
   const isCat = node.type === 'category';
 
-  const card = el('div', `item-card${isCat ? '' : ' is-item'}`);
+  const card = el('div', 'item-card');
   card.dataset.id = node.id;
   card.style.animationDelay = `${idx * 30}ms`;
 
@@ -167,23 +204,25 @@ function makeCard(node, idx) {
 
   // Info
   const info = el('div', 'item-info');
-  const name = el('div', 'item-name');
-  name.textContent = node.name;
-  info.appendChild(name);
+  const nameEl = el('div', 'item-name');
+  nameEl.textContent = node.name;
+  info.appendChild(nameEl);
   if (isCat) {
     const meta = el('div', 'item-meta');
     const c = childCount(node);
     meta.textContent = c === 0 ? 'Empty' : `${c} ${c === 1 ? 'item' : 'items'}`;
     info.appendChild(meta);
+  } else if (node.notes?.trim()) {
+    const meta = el('div', 'item-meta notes-preview');
+    meta.textContent = node.notes.split('\n')[0].slice(0, 70);
+    info.appendChild(meta);
   }
   card.appendChild(info);
 
-  // Chevron for categories
-  if (isCat) {
-    const chev = el('div', 'item-chevron');
-    chev.innerHTML = ICON_CHEV;
-    card.appendChild(chev);
-  }
+  // Chevron for all (categories navigate in, items open notes)
+  const chev = el('div', 'item-chevron');
+  chev.innerHTML = ICON_CHEV;
+  card.appendChild(chev);
 
   // More button
   const moreBtn = el('button', 'item-more');
@@ -192,13 +231,11 @@ function makeCard(node, idx) {
   moreBtn.onclick = e => { e.stopPropagation(); openCtxMenu(e, node.id); };
   card.appendChild(moreBtn);
 
-  // Navigate on click (categories only)
-  if (isCat) {
-    card.addEventListener('click', e => {
-      if (e.target.closest('.item-more')) return;
-      navInto(node.id);
-    });
-  }
+  // All cards navigate on click
+  card.addEventListener('click', e => {
+    if (e.target.closest('.item-more')) return;
+    navInto(node.id);
+  });
 
   // Long-press → context menu (mobile)
   let lpTimer;
