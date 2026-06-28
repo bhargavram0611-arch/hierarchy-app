@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="36" fill="#4f46e5"/>
+  <circle cx="96" cy="44" r="14" fill="white"/>
+  <line x1="96" y1="58" x2="96" y2="86" stroke="white" stroke-width="5" stroke-linecap="round"/>
+  <line x1="96" y1="86" x2="52" y2="104" stroke="white" stroke-width="5" stroke-linecap="round"/>
+  <line x1="96" y1="86" x2="140" y2="104" stroke="white" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="52" cy="116" r="13" fill="white"/>
+  <circle cx="140" cy="116" r="13" fill="white"/>
+  <line x1="52" y1="129" x2="34" y2="152" stroke="white" stroke-width="4" stroke-linecap="round"/>
+  <line x1="52" y1="129" x2="70" y2="152" stroke="white" stroke-width="4" stroke-linecap="round"/>
+  <line x1="140" y1="129" x2="126" y2="152" stroke="white" stroke-width="4" stroke-linecap="round"/>
+  <line x1="140" y1="129" x2="154" y2="152" stroke="white" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="34" cy="160" r="10" fill="rgba(255,255,255,0.7)"/>
+  <circle cx="70" cy="160" r="10" fill="rgba(255,255,255,0.7)"/>
+  <circle cx="126" cy="160" r="10" fill="rgba(255,255,255,0.7)"/>
+  <circle cx="154" cy="160" r="10" fill="rgba(255,255,255,0.7)"/>
+</svg>
