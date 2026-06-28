@@ -18,6 +18,10 @@ let state = {
 let cryptoKey = null;   // AES-GCM CryptoKey — lives only in memory, never stored
 let ctxTarget = null;
 let drag = { active: false, id: null, ghost: null, source: null, lastTarget: null };
+let pendingShare       = null;   // captured from share-target URL params
+let shareUrl           = '';
+let shareCategoryId    = ROOT_ID;
+let categoryPickerCb   = null;   // callback for generic category picker
 
 // ─── Crypto helpers ───────────────────────────────────────────────────────────
 const _enc = new TextEncoder();
@@ -188,7 +192,7 @@ async function submitLock() {
     btn.textContent = 'Setting up…'; btn.disabled = true;
     try {
       await setupPassword(password);
-      hideLockScreen(); render();
+      hideLockScreen(); render(); processPendingShare();
     } catch (e) {
       err.textContent = 'Setup failed. Try again.';
       btn.textContent = 'Set Password'; btn.disabled = false;
@@ -197,7 +201,7 @@ async function submitLock() {
     btn.textContent = 'Unlocking…'; btn.disabled = true;
     try {
       await unlock(password);
-      hideLockScreen(); render();
+      hideLockScreen(); render(); processPendingShare();
     } catch (e) {
       err.textContent = 'Incorrect password.';
       $('lockInput').value = ''; $('lockInput').focus();
@@ -254,7 +258,19 @@ function renderItemDetail(node) {
   const listEl = $('itemList');
   listEl.innerHTML = '';
 
-  const editor   = el('div', 'notes-editor');
+  const editor = el('div', 'notes-editor');
+
+  // URL link (for items saved via share)
+  if (node.url) {
+    const link = el('a', 'item-url-link');
+    link.href = node.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+    const ico  = el('span', 'url-platform'); ico.textContent = getPlatformIcon(node.url);
+    const txt  = el('span', 'url-text');     txt.textContent = node.url;
+    const lbl  = el('span', 'url-open');     lbl.textContent = 'Open ↗';
+    link.appendChild(ico); link.appendChild(txt); link.appendChild(lbl);
+    editor.appendChild(link);
+  }
+
   const textarea = el('textarea', 'notes-textarea');
   textarea.placeholder = 'Write your notes here…';
   textarea.value = node.notes || '';
@@ -636,6 +652,86 @@ const ICON_DRAG   = `<svg width="16" height="16" viewBox="0 0 24 24" fill="curre
 const ICON_BACK   = `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>`;
 const ICON_LOCK   = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
 
+// ─── Share Target ────────────────────────────────────────────────────────────
+function checkSharedContent() {
+  const p     = new URLSearchParams(window.location.search);
+  const url   = p.get('url') || extractUrl(p.get('text'));
+  const title = p.get('title') || '';
+  if (url) {
+    pendingShare = { url, name: title };
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+}
+
+function processPendingShare() {
+  if (!pendingShare) return;
+  const { url, name } = pendingShare;
+  pendingShare = null;
+  shareUrl        = url;
+  shareCategoryId = ROOT_ID;
+  $('shareNameInput').value     = name || detectPlatform(url);
+  $('shareNameInput').classList.remove('shake');
+  $('shareUrlPreview').textContent = url;
+  $('shareUrlPreview').href        = url;
+  updateShareDest();
+  openModal('shareModal');
+  setTimeout(() => { $('shareNameInput').focus(); $('shareNameInput').select(); }, 300);
+}
+
+function extractUrl(text) {
+  if (!text) return '';
+  const m = text.match(/https?:\/\/[^\s]+/);
+  return m ? m[0] : '';
+}
+
+function detectPlatform(url) {
+  if (!url) return 'Link';
+  if (url.includes('instagram.com')) return 'Instagram';
+  if (url.includes('youtube.com') || url.includes('youtu.be')) return 'YouTube';
+  if (url.includes('facebook.com') || url.includes('fb.com')) return 'Facebook';
+  if (url.includes('twitter.com') || url.includes('x.com')) return 'X (Twitter)';
+  if (url.includes('tiktok.com')) return 'TikTok';
+  try { return new URL(url).hostname.replace('www.', ''); } catch { return 'Link'; }
+}
+
+function getPlatformIcon(url) {
+  if (!url) return '🔗';
+  if (url.includes('instagram.com')) return '📸';
+  if (url.includes('youtube.com') || url.includes('youtu.be')) return '▶️';
+  if (url.includes('facebook.com') || url.includes('fb.com')) return '👥';
+  if (url.includes('twitter.com') || url.includes('x.com')) return '🐦';
+  if (url.includes('tiktok.com')) return '🎵';
+  return '🔗';
+}
+
+function updateShareDest() {
+  const cat = state.nodes[shareCategoryId];
+  $('shareDestBtn').textContent = `📁 ${cat?.id === ROOT_ID ? 'Home' : (cat?.name || 'Home')}`;
+}
+
+function saveSharedItem() {
+  const name = $('shareNameInput').value.trim();
+  if (!name) { shake('shareNameInput'); return; }
+
+  const id   = crypto.randomUUID();
+  const node = { id, name, type: 'item', parentId: shareCategoryId, url: shareUrl, notes: '', createdAt: Date.now() };
+  state.nodes[id] = node;
+  state.nodes[shareCategoryId].children.push(id);
+  save();
+  closeModal('shareModal');
+
+  // Navigate to the category where it was saved
+  state.path = buildPathTo(shareCategoryId);
+  render();
+}
+
+function buildPathTo(id) {
+  const ids = [];
+  let cur = state.nodes[id];
+  while (cur) { ids.unshift(cur.id); if (!cur.parentId) break; cur = state.nodes[cur.parentId]; }
+  return ids;
+}
+
 // ─── Move ────────────────────────────────────────────────────────────────────
 let moveTarget = null;
 
@@ -729,7 +825,14 @@ function populateMoveList(query) {
     row.appendChild(info);
 
     if (!isCurrent) {
-      row.onclick = () => { moveNode(moveTarget, cat.id); closeModal('moveModal'); moveTarget = null; };
+      row.onclick = () => {
+        if (categoryPickerCb) {
+          const cb = categoryPickerCb; categoryPickerCb = null; moveTarget = null;
+          closeModal('moveModal'); cb(cat.id);
+        } else {
+          moveNode(moveTarget, cat.id); closeModal('moveModal'); moveTarget = null;
+        }
+      };
     }
 
     listEl.appendChild(row);
@@ -780,9 +883,24 @@ function wireEvents() {
   $('ctxMove').onclick   = () => { const id=ctxTarget; closeCtxMenu(); openMoveModal(id); };
 
   // Move Modal
-  $('moveSearch').oninput  = e => populateMoveList(e.target.value);
-  $('moveCancelBtn').onclick = () => { closeModal('moveModal'); moveTarget = null; };
-  $('moveModal').onclick     = e => { if (e.target === $('moveModal')) { closeModal('moveModal'); moveTarget = null; } };
+  $('moveSearch').oninput    = e => populateMoveList(e.target.value);
+  $('moveCancelBtn').onclick  = () => { closeModal('moveModal'); moveTarget = null; categoryPickerCb = null; };
+  $('moveModal').onclick      = e => { if (e.target === $('moveModal')) { closeModal('moveModal'); moveTarget = null; categoryPickerCb = null; } };
+
+  // Share Modal
+  $('shareDestBtn').onclick  = () => {
+    categoryPickerCb = id => { shareCategoryId = id; updateShareDest(); openModal('shareModal'); setTimeout(() => $('shareNameInput').focus(), 300); };
+    moveTarget = null;
+    $('moveTitle').textContent = 'Save to…';
+    $('moveSearch').value = '';
+    populateMoveList('');
+    closeModal('shareModal');
+    openModal('moveModal');
+  };
+  $('shareSaveBtn').onclick   = saveSharedItem;
+  $('shareCancelBtn').onclick = () => closeModal('shareModal');
+  $('shareModal').onclick     = e => { if (e.target === $('shareModal')) closeModal('shareModal'); };
+  $('shareNameInput').onkeydown = e => { if (e.key === 'Enter') saveSharedItem(); if (e.key === 'Escape') closeModal('shareModal'); };
   $('ctxDelete').onclick = () => {
     const id=ctxTarget, node=state.nodes[id]; closeCtxMenu(); if (!node) return;
     let msg = `Delete "${node.name}"?`;
@@ -819,6 +937,7 @@ function registerSW() {
 async function init() {
   $('backBtn').innerHTML = ICON_BACK;
   $('secBtn').innerHTML  = ICON_LOCK;
+  checkSharedContent();
   wireEvents();
   registerSW();
 

@@ -117,6 +117,24 @@
     </button>
   </div>
 
+  <!-- ── Share Save Modal ── -->
+  <div class="overlay" id="shareModal" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h2 class="modal-title">Save Link</h2>
+      <input class="modal-input" id="shareNameInput" type="text"
+             placeholder="Name…" maxlength="120" autocomplete="off">
+      <a class="share-url-preview" id="shareUrlPreview" target="_blank" rel="noopener noreferrer"></a>
+      <div class="share-dest">
+        <span>Save to</span>
+        <button class="share-dest-btn" id="shareDestBtn">📁 Home</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-ghost"   id="shareCancelBtn">Cancel</button>
+        <button class="btn-primary" id="shareSaveBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Move Modal ── -->
   <div class="overlay" id="moveModal" role="dialog" aria-modal="true">
     <div class="modal">
