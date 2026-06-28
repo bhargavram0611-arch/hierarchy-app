@@ -636,6 +636,106 @@ const ICON_DRAG   = `<svg width="16" height="16" viewBox="0 0 24 24" fill="curre
 const ICON_BACK   = `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>`;
 const ICON_LOCK   = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
 
+// ─── Move ────────────────────────────────────────────────────────────────────
+let moveTarget = null;
+
+function moveNode(id, targetCatId) {
+  const node = state.nodes[id];
+  if (!node || targetCatId === node.parentId) return;
+
+  // Remove from old parent
+  const oldParent = state.nodes[node.parentId];
+  if (oldParent) oldParent.children = oldParent.children.filter(c => c !== id);
+
+  // Add to new parent
+  const newParent = state.nodes[targetCatId];
+  if (!newParent || newParent.type !== 'category') return;
+  newParent.children.push(id);
+  node.parentId = targetCatId;
+
+  // Fix navigation path if we moved something we were inside
+  const idx = state.path.indexOf(id);
+  if (idx !== -1) {
+    state.path = state.path.slice(0, Math.max(1, idx));
+  }
+
+  save(); render();
+}
+
+function getDescendants(id) {
+  const set = new Set();
+  function walk(nodeId) {
+    const node = state.nodes[nodeId];
+    if (!node || node.type !== 'category') return;
+    node.children?.forEach(cid => { set.add(cid); walk(cid); });
+  }
+  walk(id);
+  return set;
+}
+
+function openMoveModal(id) {
+  moveTarget = id;
+  const node = state.nodes[id];
+  $('moveTitle').textContent = `Move "${node.name}" to…`;
+  $('moveSearch').value = '';
+  populateMoveList('');
+  openModal('moveModal');
+  setTimeout(() => $('moveSearch').focus(), 300);
+}
+
+function populateMoveList(query) {
+  const listEl = $('moveList');
+  listEl.innerHTML = '';
+  const q        = query.trim().toLowerCase();
+  const excluded = getDescendants(moveTarget);
+  excluded.add(moveTarget);
+
+  const cats = Object.values(state.nodes)
+    .filter(n => n.type === 'category' && !excluded.has(n.id))
+    .filter(n => !q || n.name.toLowerCase().includes(q) || n.id === ROOT_ID)
+    .sort((a, b) => {
+      if (a.id === ROOT_ID) return -1;
+      if (b.id === ROOT_ID) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+  if (!cats.length) {
+    const empty = el('div', 'search-empty'); empty.textContent = 'No categories found';
+    listEl.appendChild(empty); return;
+  }
+
+  const currentParentId = state.nodes[moveTarget]?.parentId;
+
+  cats.forEach(cat => {
+    const isCurrent = cat.id === currentParentId;
+    const row = el('div', `move-row${isCurrent ? ' move-current' : ''}`);
+
+    const ico = el('div', 'item-ico cat'); ico.innerHTML = ICON_FOLDER; row.appendChild(ico);
+
+    const info   = el('div', 'item-info');
+    const nameEl = el('div', 'item-name');
+    nameEl.textContent = cat.id === ROOT_ID ? '⌂ Home (root)' : cat.name;
+    info.appendChild(nameEl);
+
+    const pathStr = getNodePath(cat.id);
+    if (pathStr) {
+      const pathEl = el('div', 'search-path'); pathEl.textContent = pathStr; info.appendChild(pathEl);
+    }
+
+    if (isCurrent) {
+      const tag = el('span', 'move-tag'); tag.textContent = 'current'; info.appendChild(tag);
+    }
+
+    row.appendChild(info);
+
+    if (!isCurrent) {
+      row.onclick = () => { moveNode(moveTarget, cat.id); closeModal('moveModal'); moveTarget = null; };
+    }
+
+    listEl.appendChild(row);
+  });
+}
+
 // ─── Event wiring ─────────────────────────────────────────────────────────────
 function wireEvents() {
   // Lock screen
@@ -677,6 +777,12 @@ function wireEvents() {
 
   // Context Menu
   $('ctxRename').onclick = () => { const id=ctxTarget; closeCtxMenu(); openRenameModal(id); };
+  $('ctxMove').onclick   = () => { const id=ctxTarget; closeCtxMenu(); openMoveModal(id); };
+
+  // Move Modal
+  $('moveSearch').oninput  = e => populateMoveList(e.target.value);
+  $('moveCancelBtn').onclick = () => { closeModal('moveModal'); moveTarget = null; };
+  $('moveModal').onclick     = e => { if (e.target === $('moveModal')) { closeModal('moveModal'); moveTarget = null; } };
   $('ctxDelete').onclick = () => {
     const id=ctxTarget, node=state.nodes[id]; closeCtxMenu(); if (!node) return;
     let msg = `Delete "${node.name}"?`;
