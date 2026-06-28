@@ -7,7 +7,7 @@ Update this file at the end of every session. Add a new entry under Session Hist
 ## Current State (as of 2026-06-29)
 
 The app is fully functional and deployed. All core features are working.
-SW cache is at `hierarchy-v10`.
+SW cache is at `hierarchy-v10`. Session closed cleanly — no pending work.
 
 **What works:**
 - Full hierarchy navigation (infinite nesting)
