@@ -1204,3 +1204,20 @@ mark {
 .track-run-info  { flex: 1; min-width: 0; }
 .track-run-dur   { font-size: .9375rem; font-weight: 600; color: var(--text); }
 .track-run-dates { font-size: .75rem; color: var(--text-2); margin-top: 2px; }
+
+.track-run-del {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--t), color var(--t);
+  -webkit-tap-highlight-color: transparent;
+}
+.track-run-del:hover { background: rgba(239,68,68,.1); color: var(--danger); }

@@ -1276,6 +1276,11 @@ function startRun() {
   save(); render();
 }
 
+function deleteRun(id) {
+  state.runs = (state.runs || []).filter(r => r.id !== id);
+  save(); render();
+}
+
 function stopRun() {
   const active = (state.runs || []).find(r => !r.stoppedAt);
   if (!active) return;
@@ -1379,7 +1384,11 @@ function renderTrackTab() {
     const dur   = el('div', 'track-run-dur');   dur.textContent   = formatDuration(ms);
     const dates = el('div', 'track-run-dates'); dates.textContent = `${fmtDate(run.startedAt)} → ${fmtDate(run.stoppedAt)}`;
     info.appendChild(dur); info.appendChild(dates);
-    row.appendChild(numEl); row.appendChild(info);
+    const delBtn = el('button', 'track-run-del');
+    delBtn.title = 'Delete';
+    delBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`;
+    delBtn.onclick = () => { if (confirm('Delete this run?')) deleteRun(run.id); };
+    row.appendChild(numEl); row.appendChild(info); row.appendChild(delBtn);
     sec.appendChild(row);
   });
 
