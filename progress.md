@@ -7,7 +7,7 @@ Update this file at the end of every session. Add a new entry under Session Hist
 ## Current State (as of 2026-06-30)
 
 The app is fully functional and deployed. All core features are working.
-SW cache is at `hierarchy-v11`. Session closed cleanly — no pending work.
+SW cache is at `hierarchy-v12`. Session closed cleanly — no pending work.
 
 **What works:**
 - Full hierarchy navigation (infinite nesting)
@@ -33,8 +33,9 @@ SW cache is at `hierarchy-v11`. Session closed cleanly — no pending work.
 - Stop button freezes the run, saves to history, resets to idle
 - Only one active run at a time; live counter updates every 30 seconds
 - History list shows all past runs: run #, total duration, date range
+- Delete button on each history run (confirms before removing)
 - Data stored in encrypted state (`state.runs[]`) alongside existing data
-- SW cache bumped to `hierarchy-v11`
+- SW cache bumped to `hierarchy-v12`
 
 ---
 
