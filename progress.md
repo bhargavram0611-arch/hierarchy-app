@@ -4,10 +4,10 @@ Update this file at the end of every session. Add a new entry under Session Hist
 
 ---
 
-## Current State (as of 2026-06-29)
+## Current State (as of 2026-06-30)
 
 The app is fully functional and deployed. All core features are working.
-SW cache is at `hierarchy-v10`. Session closed cleanly — no pending work.
+SW cache is at `hierarchy-v11`. Session closed cleanly — no pending work.
 
 **What works:**
 - Full hierarchy navigation (infinite nesting)
@@ -20,10 +20,23 @@ SW cache is at `hierarchy-v10`. Session closed cleanly — no pending work.
 - Web Share Target (share URLs from Instagram/YouTube/etc. into the app)
 - Schedule system (once / daily / weekly) with Today / Upcoming / Done tabs
 - Completed items show strikethrough in hierarchy list
+- Track tab — lap-based streak tracker (Start/Stop, live counter, history)
 
 ---
 
 ## Session History
+
+### Session 2 — 2026-06-30
+**Added:**
+- Track tab (5th tab) — lap-based streak/reset tracker
+- Start button begins counting days and hours from current moment
+- Stop button freezes the run, saves to history, resets to idle
+- Only one active run at a time; live counter updates every 30 seconds
+- History list shows all past runs: run #, total duration, date range
+- Data stored in encrypted state (`state.runs[]`) alongside existing data
+- SW cache bumped to `hierarchy-v11`
+
+---
 
 ### Session 1 — 2026-06-29
 **Built from scratch:**
