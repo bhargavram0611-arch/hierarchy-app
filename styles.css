@@ -1053,3 +1053,154 @@ mark {
   to   { opacity: 1; transform: translateY(0); }
 }
 .item-card { animation: fade-up .14s ease both; }
+
+/* ── Track Tab ── */
+.track-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 28px 20px 24px;
+  box-shadow: var(--shadow-s);
+  text-align: center;
+  margin-bottom: 12px;
+}
+.track-card.running { border-color: var(--primary); }
+
+.track-running-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: .75rem;
+  font-weight: 700;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: 18px;
+}
+
+.track-dot-pulse {
+  color: #22c55e;
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .25; }
+}
+
+.track-counter { margin-bottom: 10px; }
+
+.track-days {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+}
+
+.track-days-num {
+  font-size: 4.5rem;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1;
+}
+
+.track-days-lbl {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.track-hms {
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--primary);
+  margin-top: 6px;
+}
+
+.track-since {
+  font-size: .82rem;
+  color: var(--text-2);
+  margin-bottom: 22px;
+}
+
+.track-stop-btn {
+  padding: 12px 44px;
+  background: var(--danger);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--t), transform var(--t);
+  -webkit-tap-highlight-color: transparent;
+}
+.track-stop-btn:hover  { background: #dc2626; }
+.track-stop-btn:active { transform: scale(.95); }
+
+.track-idle-msg { margin-bottom: 22px; }
+.track-idle-icon  { font-size: 3rem; line-height: 1; margin-bottom: 10px; }
+.track-idle-title { font-size: 1.1rem; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.track-idle-sub   { font-size: .85rem; color: var(--text-2); }
+
+.track-start-btn {
+  padding: 14px 56px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(79,70,229,.4);
+  transition: background var(--t), transform var(--t), box-shadow var(--t);
+  -webkit-tap-highlight-color: transparent;
+}
+.track-start-btn:hover  { background: var(--primary-dark); box-shadow: 0 6px 18px rgba(79,70,229,.5); }
+.track-start-btn:active { transform: scale(.95); }
+
+.track-history {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+  box-shadow: var(--shadow-s);
+}
+
+.track-history-hdr {
+  padding: 11px 16px;
+  font-size: .72rem;
+  font-weight: 700;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  border-bottom: 1px solid var(--border);
+}
+
+.track-run-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.track-run-row:last-child { border-bottom: none; }
+
+.track-run-num {
+  font-size: .72rem;
+  font-weight: 700;
+  color: var(--text-2);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 4px 8px;
+  flex-shrink: 0;
+  min-width: 36px;
+  text-align: center;
+}
+
+.track-run-info  { flex: 1; min-width: 0; }
+.track-run-dur   { font-size: .9375rem; font-weight: 600; color: var(--text); }
+.track-run-dates { font-size: .75rem; color: var(--text-2); margin-top: 2px; }

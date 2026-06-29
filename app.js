@@ -12,7 +12,8 @@ let state = {
   nodes: {
     [ROOT_ID]: { id: ROOT_ID, name: 'My Hierarchy', type: 'category', parentId: null, children: [], createdAt: Date.now() }
   },
-  path: [ROOT_ID]
+  path: [ROOT_ID],
+  runs: []
 };
 
 let cryptoKey = null;   // AES-GCM CryptoKey — lives only in memory, never stored
@@ -25,7 +26,8 @@ let categoryPickerCb   = null;
 let addLinkItemId      = null;
 let lastAutoName       = '';
 let renameLinkTarget   = null;
-let activeTab          = 'tree';  // 'tree' | 'today' | 'future' | 'done'
+let activeTab          = 'tree';  // 'tree' | 'today' | 'future' | 'done' | 'track'
+let trackInterval      = null;
 let tabItemId          = null;    // item being viewed from a non-tree tab
 let schedItemId        = null;
 let schedType          = 'once';
@@ -123,6 +125,7 @@ function sanitizePath() {
 }
 
 function migrateData() {
+  if (!state.runs) state.runs = [];
   Object.values(state.nodes).forEach(node => {
     if (node.type !== 'item') return;
     if (!node.links) {
@@ -333,6 +336,7 @@ async function submitChangePassword() {
 
 // ─── Render ──────────────────────────────────────────────────────────────────
 function render() {
+  if (activeTab !== 'track') clearTrackTick();
   renderHeader();
   renderTabs();
   renderBreadcrumb();
@@ -562,6 +566,7 @@ function renderHeader() {
   else if (activeTab === 'today')         title = 'Today';
   else if (activeTab === 'future')        title = 'Upcoming';
   else if (activeTab === 'done')          title = 'Done';
+  else if (activeTab === 'track')         title = 'Track';
   else                                    title = current().name;
   $('headerTitle').textContent = title;
 }
@@ -573,6 +578,7 @@ function renderTabs() {
     { id: 'today',  label: 'Today',    svg: `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5C3.9 3 3 3.9 3 5v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>`, badge: todayCount },
     { id: 'future', label: 'Upcoming', svg: `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5C3.9 3 3 3.9 3 5v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zm-2-5h-4v4h-2v-4H9v-2h2V9h2v3h4v2z"/></svg>` },
     { id: 'done',   label: 'Done',     svg: `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>` },
+    { id: 'track',  label: 'Track',    svg: `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/></svg>` },
   ];
   const bar = $('tabBar');
   bar.innerHTML = '';
@@ -621,6 +627,8 @@ function renderTabView() {
   const listEl = $('itemList');
   const emptyEl = $('emptyState');
   listEl.innerHTML = '';
+
+  if (activeTab === 'track') { renderTrackTab(); return; }
 
   let items, emptyIcon, emptyMsg;
   if (activeTab === 'today') {
@@ -1242,6 +1250,140 @@ function submitSchedule() {
   }
   node.done = false; node.doneDate = null; node.doneAt = null;
   save(); closeModal('scheduleModal'); render();
+}
+
+// ─── Track ───────────────────────────────────────────────────────────────────
+function fmtDate(ts) {
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatDuration(ms) {
+  const totalMins = Math.floor(ms / 60000);
+  const days  = Math.floor(totalMins / 1440);
+  const hours = Math.floor((totalMins % 1440) / 60);
+  const mins  = totalMins % 60;
+  const parts = [];
+  if (days)  parts.push(`${days} day${days !== 1 ? 's' : ''}`);
+  if (hours) parts.push(`${hours}h`);
+  if (!days) parts.push(`${mins}m`);
+  return parts.length ? parts.join(' ') : '0m';
+}
+
+function startRun() {
+  if (!state.runs) state.runs = [];
+  if (state.runs.find(r => !r.stoppedAt)) return;
+  state.runs.push({ id: crypto.randomUUID(), startedAt: Date.now(), stoppedAt: null });
+  save(); render();
+}
+
+function stopRun() {
+  const active = (state.runs || []).find(r => !r.stoppedAt);
+  if (!active) return;
+  active.stoppedAt = Date.now();
+  save(); render();
+}
+
+function startTrackTick() {
+  if (trackInterval) return;
+  trackInterval = setInterval(() => {
+    const active = (state.runs || []).find(r => !r.stoppedAt);
+    if (!active || activeTab !== 'track') { clearTrackTick(); return; }
+    const counter = document.getElementById('trackCounter');
+    if (!counter) { clearTrackTick(); return; }
+    const ms    = Date.now() - active.startedAt;
+    const days  = Math.floor(ms / 86400000);
+    const hours = Math.floor((ms % 86400000) / 3600000);
+    const mins  = Math.floor((ms % 3600000) / 60000);
+    const numEl = counter.querySelector('.track-days-num');
+    const lblEl = counter.querySelector('.track-days-lbl');
+    const hmsEl = counter.querySelector('.track-hms');
+    if (numEl) numEl.textContent = days;
+    if (lblEl) lblEl.textContent = days === 1 ? ' day' : ' days';
+    if (hmsEl) hmsEl.textContent = `${hours}h ${mins}m`;
+  }, 30000);
+}
+
+function clearTrackTick() {
+  if (trackInterval) { clearInterval(trackInterval); trackInterval = null; }
+}
+
+function renderTrackTab() {
+  $('emptyState').style.display = 'none';
+  const listEl = $('itemList');
+  if (!state.runs) state.runs = [];
+  const active = state.runs.find(r => !r.stoppedAt);
+
+  // Active / idle card
+  const card = el('div', `track-card${active ? ' running' : ' idle'}`);
+
+  if (active) {
+    const ms    = Date.now() - active.startedAt;
+    const days  = Math.floor(ms / 86400000);
+    const hours = Math.floor((ms % 86400000) / 3600000);
+    const mins  = Math.floor((ms % 3600000) / 60000);
+
+    const dot = el('div', 'track-running-dot');
+    dot.innerHTML = `<span class="track-dot-pulse">●</span> Running`;
+    card.appendChild(dot);
+
+    const counter = el('div', 'track-counter');
+    counter.id = 'trackCounter';
+    const daysRow = el('div', 'track-days');
+    const daysNum = el('span', 'track-days-num'); daysNum.textContent = days;
+    const daysLbl = el('span', 'track-days-lbl'); daysLbl.textContent = days === 1 ? ' day' : ' days';
+    daysRow.appendChild(daysNum); daysRow.appendChild(daysLbl);
+    const hmsEl = el('div', 'track-hms'); hmsEl.textContent = `${hours}h ${mins}m`;
+    counter.appendChild(daysRow); counter.appendChild(hmsEl);
+    card.appendChild(counter);
+
+    const since = el('div', 'track-since');
+    since.textContent = `Since ${fmtDate(active.startedAt)}`;
+    card.appendChild(since);
+
+    const stopBtn = el('button', 'track-stop-btn');
+    stopBtn.textContent = 'Stop';
+    stopBtn.onclick = stopRun;
+    card.appendChild(stopBtn);
+
+    startTrackTick();
+  } else {
+    const msgDiv = el('div', 'track-idle-msg');
+    const icon = el('div', 'track-idle-icon'); icon.textContent = '⏱';
+    const title = el('h2', 'track-idle-title'); title.textContent = 'Not tracking';
+    const sub = el('p', 'track-idle-sub'); sub.textContent = 'Tap Start to begin counting from today';
+    msgDiv.appendChild(icon); msgDiv.appendChild(title); msgDiv.appendChild(sub);
+    card.appendChild(msgDiv);
+
+    const startBtn = el('button', 'track-start-btn');
+    startBtn.textContent = 'Start';
+    startBtn.onclick = startRun;
+    card.appendChild(startBtn);
+  }
+
+  listEl.appendChild(card);
+
+  // History
+  const allRuns = state.runs.map((r, i) => ({ run: r, num: i + 1 }));
+  const stopped = allRuns.filter(({ run }) => run.stoppedAt).reverse();
+  if (!stopped.length) return;
+
+  const sec = el('div', 'track-history');
+  const hdr = el('div', 'track-history-hdr'); hdr.textContent = 'History';
+  sec.appendChild(hdr);
+
+  stopped.forEach(({ run, num }) => {
+    const ms  = run.stoppedAt - run.startedAt;
+    const row = el('div', 'track-run-row');
+    const numEl = el('div', 'track-run-num'); numEl.textContent = `#${num}`;
+    const info  = el('div', 'track-run-info');
+    const dur   = el('div', 'track-run-dur');   dur.textContent   = formatDuration(ms);
+    const dates = el('div', 'track-run-dates'); dates.textContent = `${fmtDate(run.startedAt)} → ${fmtDate(run.stoppedAt)}`;
+    info.appendChild(dur); info.appendChild(dates);
+    row.appendChild(numEl); row.appendChild(info);
+    sec.appendChild(row);
+  });
+
+  listEl.appendChild(sec);
 }
 
 // ─── Event wiring ─────────────────────────────────────────────────────────────
