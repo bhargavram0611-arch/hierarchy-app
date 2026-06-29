@@ -35,7 +35,7 @@ After every push, user must **close and reopen the installed PWA** to get the up
 
 ## Key technical facts (memorize these)
 
-- **Service worker cache name:** bump version string in `sw.js` on every code push (currently `hierarchy-v10`)
+- **Service worker cache name:** bump version string in `sw.js` on every code push (currently `hierarchy-v12`)
 - **localStorage keys:** `hierarchyApp_enc_v1` (ciphertext), `hierarchyApp_salt_v1` (salt)
 - **Encryption:** AES-256-GCM, PBKDF2 200k iterations. Password never stored.
 - **Data model:** flat node map — `state.nodes[id]`, navigation via `state.path[]`
